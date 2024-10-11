@@ -11,6 +11,6 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(agent_type: AgentType) -> Self {
-        Agent {agent_type, ports: [const {0}; 4]}
+        Agent {agent_type, ports: [const {UNASSIGNED_PORT}; 4]}
     }
 }

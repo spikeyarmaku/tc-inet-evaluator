@@ -1,6 +1,8 @@
 use crate::expr::*;
+use crate::global::*;
 
-pub fn parse_tree(str: String) -> Option<Expr> {
+pub fn parse_tree(str: &String) -> Option<Expr> {
+    crate::debug_log!("\n=== STEP 1: Parsing String into Expr ===\n");
     let mut expr: Option<Expr> = None;
     let mut stack: Vec<Option<Expr>> = Vec::new();
     for c in str.chars() {

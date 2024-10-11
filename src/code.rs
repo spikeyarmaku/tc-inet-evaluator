@@ -7,7 +7,6 @@ pub type Code = Vec<Instr>;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Instr {
     MkAgent(RegAddress, AgentType),
-    MkName(RegAddress),
     Connect(RegAddress, PortNum, RegAddress),
     Push(RegAddress, RegAddress),
     Load(HeapAddress, RegAddress),
@@ -46,7 +45,8 @@ fn program_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
         }
         1 => {
             // Create instructions for the subtree
-            let (child_addr, mut code) = program_to_code(&expr.children[0], next_id);
+            let (child_addr, mut code) =
+                program_to_code(&expr.children[0], next_id);
             code.append(&mut vec![
                 Instr::MkAgent(0, AgentType::S),
                 Instr::Load(child_addr, 1),
@@ -55,8 +55,11 @@ fn program_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
             (child_addr + 1, code)
         }
         _ => {
-            let (child0_addr, mut code) = program_to_code(&expr.children[0], next_id);
-            let (child1_addr, mut right_code) = program_to_code(&expr.children[1], child0_addr + 1);
+            let (child0_addr, mut code) =
+                program_to_code(&expr.children[0], next_id);
+            let (child1_addr, mut right_code) =
+                program_to_code(&expr.children[1],
+                    child0_addr + 1);
             code.append(&mut right_code);
             code.append(&mut vec![
                 Instr::Load(child0_addr, 1),
@@ -72,9 +75,12 @@ fn program_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
 
 fn application_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
     let rightmost_child = &expr.children[expr.children.len() - 1];
-    let left_children = Expr{children: expr.children[0..expr.children.len() - 1].to_vec()};
-    let (child0_addr, mut child0_code) = expr_to_code_and_pos(&left_children, next_id);
-    let (child1_addr, mut child1_code)  = expr_to_code_and_pos(&rightmost_child, child0_addr + 1);
+    let left_children = Expr{
+        children: expr.children[0..expr.children.len() - 1].to_vec()};
+    let (child0_addr, mut child0_code) =
+        expr_to_code_and_pos(&left_children, next_id);
+    let (child1_addr, mut child1_code) =
+        expr_to_code_and_pos(&rightmost_child, child0_addr + 1);
     child0_code.append(&mut child1_code);
     child0_code.append(&mut vec![
         Instr::MkAgent(0, AgentType::A),
@@ -87,7 +93,7 @@ fn application_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code)
         }
         ExprType::Application => {
             child0_code.append(&mut vec![
-                Instr::MkName(3),
+                Instr::MkAgent(3, AgentType::Name),
                 Instr::Connect(0, 0, 3),
                 Instr::Connect(2, 1, 3)
             ]);
@@ -118,20 +124,28 @@ fn expr_to_code_and_pos(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code
 pub fn expr_to_code(expr: &Expr) -> Code {
     // Interface
     let mut code: Code = vec![
-        Instr::MkName(0),
+        Instr::MkAgent(0, AgentType::Name),
     ];
     match expr.get_type() {
         ExprType::Program => {
-            let (addr, mut tree_code) = program_to_code(&expr, 1);
+            let (addr, mut tree_code) =
+                program_to_code(&expr, 1);
             code.append(&mut tree_code);
             // Otherwise, push the root node and the interface
-            code.append(&mut vec![Instr::Load(0, 0), Instr::Load(addr, 1), Instr::Push(0, 1)]);
+            code.append(&mut vec![
+                Instr::Load(0, 0),
+                Instr::Load(addr, 1),
+                Instr::Push(0, 1)]);
         }
         ExprType::Application => {
-            let (addr, mut tree_code) = application_to_code(&expr, 1);
+            let (addr, mut tree_code) =
+                application_to_code(&expr, 1);
             code.append(&mut tree_code);
             // If the tree is an application, connect its p1 to the interface
-            code.append(&mut vec![Instr::Load(0, 0), Instr::Load(addr, 1), Instr::Connect(1, 1, 0)]);
+            code.append(&mut vec![
+                Instr::Load(0, 0),
+                Instr::Load(addr, 1),
+                Instr::Connect(1, 1, 0)]);
         }
     }
     code.append(&mut vec![Instr::Return]);
