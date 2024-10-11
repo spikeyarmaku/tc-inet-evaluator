@@ -2,7 +2,7 @@ use crate::expr::*;
 use crate::global::*;
 
 pub fn parse_tree(str: &String) -> Option<Expr> {
-    crate::debug_log!("\n=== STEP 1: Parsing String into Expr ===\n");
+    crate::debug_log!("\n=== Parsing String into Expr ===\n");
     let mut expr: Option<Expr> = None;
     let mut stack: Vec<Option<Expr>> = Vec::new();
     for c in str.chars() {
@@ -18,18 +18,19 @@ pub fn parse_tree(str: &String) -> Option<Expr> {
                     expr = Some(temp);
                 }
             }
-            _ => {
-                match expr {
-                    None => {
-                        expr = Some(Expr {children: Vec::new()});
-                    }
-                    Some(ref mut some_expr) => {
-                        some_expr.children.push(Expr {children: Vec::new()});
-                    }
+            _ => match expr {
+                None => {
+                    expr = Some(Expr {
+                        children: Vec::new(),
+                    });
                 }
-            }
+                Some(ref mut some_expr) => {
+                    some_expr.children.push(Expr {
+                        children: Vec::new(),
+                    });
+                }
+            },
         }
     }
     expr
 }
-

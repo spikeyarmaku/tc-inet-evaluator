@@ -1,5 +1,8 @@
 #[derive(PartialEq)]
-pub enum ExprType {Program, Application}
+pub enum ExprType {
+    Program,
+    Application,
+}
 
 #[derive(Debug, Clone)]
 pub struct Expr {
@@ -16,15 +19,19 @@ impl Expr {
     }
 
     pub fn make_leaf() -> Self {
-        Self {children: vec![]}
+        Self { children: vec![] }
     }
 
     pub fn make_stem(expr: Expr) -> Self {
-        Self {children: vec![expr]}
+        Self {
+            children: vec![expr],
+        }
     }
 
     pub fn make_fork(expr0: Expr, expr1: Expr) -> Self {
-        Self {children: vec![expr0, expr1]}
+        Self {
+            children: vec![expr0, expr1],
+        }
     }
 
     pub fn to_string(&self) -> String {

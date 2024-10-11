@@ -1,21 +1,30 @@
-use crate::global::*;
+use std::ops::Index;
+
 use crate::agent::*;
 use crate::expr::*;
+use crate::global::*;
 
-pub type Code = Vec<Instr>;
+pub struct Code(Vec<Instr>);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Instr {
-    MkAgent(RegAddress, AgentType),
-    Connect(RegAddress, PortNum, RegAddress),
-    Push(RegAddress, RegAddress),
-    Load(HeapAddress, RegAddress),
-    Return
+    // Create an agent and store it on the heap
+    MkAgent (RegAddress,    AgentType               ),
+    // Connect a port of an agent to the principal port of another agent. To
+    // connect two aux ports, an intermediate Name agent has to be used
+    Connect (RegAddress,    PortNum,    RegAddress  ),
+    // Connect two agents by their principal ports and add them to the active
+    // pair stack
+    Push    (RegAddress,    RegAddress              ),
+    // Set up the registers according to an agent on the heap
+    Load    (HeapAddress,   RegAddress              ),
+    // End marker of a series of instructions
+    Return,
 }
 
 pub struct Tape {
-    pc: HeapAddress,
-    code: Code
+    pc: usize,
+    code: Code,
 }
 
 // set, read byte, read word
@@ -36,118 +45,121 @@ impl Tape {
     }
 }
 
-fn program_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
-    match expr.children.len() {
-        0 => {
-            (next_id, vec![
-                Instr::MkAgent(0, AgentType::L),
-            ])
+impl Code {
+    fn record_instrs(&mut self, instrs: &[Instr]) {
+        self.0.extend(instrs);
+    }
+
+    fn program_to_code(&mut self, expr: &Expr, next_id: HeapAddress) -> HeapAddress {
+        match expr.children.len() {
+            0 => {
+                self.record_instrs(&[Instr::MkAgent(0, AgentType::L)]);
+                next_id
+            }
+            1 => {
+                // Create instructions for the subtree
+                let child_addr = self.program_to_code(&expr.children[0], next_id);
+                self.record_instrs(&[
+                    Instr::MkAgent(0, AgentType::S),
+                    Instr::Load(child_addr, 1),
+                    Instr::Connect(0, PortNum::P0, 1),
+                ]);
+                child_addr + 1
+            }
+            _ => {
+                let child0_addr = self.program_to_code(&expr.children[0], next_id);
+                let child1_addr = self.program_to_code(&expr.children[1], child0_addr + 1);
+                self.record_instrs(&[
+                    Instr::Load(child0_addr, 1),
+                    Instr::Load(child1_addr, 2),
+                    Instr::MkAgent(0, AgentType::F),
+                    Instr::Connect(0, PortNum::P0, 1),
+                    Instr::Connect(0, PortNum::P1, 2),
+                ]);
+                child1_addr + 1
+            }
         }
-        1 => {
-            // Create instructions for the subtree
-            let (child_addr, mut code) =
-                program_to_code(&expr.children[0], next_id);
-            code.append(&mut vec![
-                Instr::MkAgent(0, AgentType::S),
-                Instr::Load(child_addr, 1),
-                Instr::Connect(0, 0, 1),
-            ]);
-            (child_addr + 1, code)
+    }
+
+    fn application_to_code(&mut self, expr: &Expr, next_id: HeapAddress) -> HeapAddress {
+        let rightmost_child = &expr.children[expr.children.len() - 1];
+        let left_children = Expr {
+            children: expr.children[0..expr.children.len() - 1].to_vec(),
+        };
+        let child0_addr = self.expr_to_code(&left_children, next_id);
+        let child1_addr = self.expr_to_code(&rightmost_child, child0_addr + 1);
+        self.record_instrs(&[
+            Instr::MkAgent(0, AgentType::A),
+            Instr::Load(child0_addr, 1),
+            Instr::Load(child1_addr, 2),
+        ]);
+        match rightmost_child.get_type() {
+            ExprType::Program => {
+                self.record_instrs(&[Instr::Connect(0, PortNum::P0, 2)]);
+            }
+            ExprType::Application => {
+                self.record_instrs(&[
+                    Instr::MkAgent(3, AgentType::Name),
+                    Instr::Connect(0, PortNum::P0, 3),
+                    Instr::Connect(2, PortNum::P1, 3),
+                ]);
+            }
         }
-        _ => {
-            let (child0_addr, mut code) =
-                program_to_code(&expr.children[0], next_id);
-            let (child1_addr, mut right_code) =
-                program_to_code(&expr.children[1],
-                    child0_addr + 1);
-            code.append(&mut right_code);
-            code.append(&mut vec![
-                Instr::Load(child0_addr, 1),
-                Instr::Load(child1_addr, 2),
-                Instr::MkAgent(0, AgentType::F),
-                Instr::Connect(0, 0, 1),
-                Instr::Connect(0, 1, 2),
-            ]);
-            (child1_addr + 1, code)
+        match left_children.get_type() {
+            ExprType::Program => self.record_instrs(&[Instr::Push(1, 0)]),
+            ExprType::Application => self.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)])
         }
+        child1_addr + 1
+    }
+
+    fn expr_to_code(&mut self, expr: &Expr, next_id: HeapAddress) -> HeapAddress {
+        match expr.get_type() {
+            ExprType::Program => self.program_to_code(expr, next_id),
+            ExprType::Application => self.application_to_code(expr, next_id),
+        }
+    }
+
+    pub fn from_instrs(instrs: &[Instr]) -> Self {
+        Self(instrs.to_vec())
+    }
+
+    // FIXME It doesn't handle cases like t(tttt)
+    // Compile a tree expression to code. Automatically use L, S and F agents
+    // and only put A where a node has more than two children
+    pub fn from_expr(expr: &Expr) -> Self {
+        // Create interface at heap[0]
+        let mut code = Self::from_instrs(&[Instr::MkAgent(0, AgentType::Name)]);
+
+        // Compile the expr to code
+        match expr.get_type() {
+            ExprType::Program => {
+                let addr = code.program_to_code(&expr, 1);
+                // If `expr` is a program, push the root node and the interface
+                code.record_instrs(&[
+                    Instr::Load(0, 0),
+                    Instr::Load(addr, 1),
+                    Instr::Push(0, 1)
+                ]);
+            }
+            ExprType::Application => {
+                let addr = code.application_to_code(&expr, 1);
+                // If `expr` is an application, connect its p1 to the interface
+                code.record_instrs(&[
+                    Instr::Load(0, 0),
+                    Instr::Load(addr, 1),
+                    Instr::Connect(1, PortNum::P1, 0),
+                ]);
+            }
+        }
+        code.record_instrs(&[Instr::Return]);
+        code
     }
 }
 
-fn application_to_code(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
-    let rightmost_child = &expr.children[expr.children.len() - 1];
-    let left_children = Expr{
-        children: expr.children[0..expr.children.len() - 1].to_vec()};
-    let (child0_addr, mut child0_code) =
-        expr_to_code_and_pos(&left_children, next_id);
-    let (child1_addr, mut child1_code) =
-        expr_to_code_and_pos(&rightmost_child, child0_addr + 1);
-    child0_code.append(&mut child1_code);
-    child0_code.append(&mut vec![
-        Instr::MkAgent(0, AgentType::A),
-        Instr::Load(child0_addr, 1),
-        Instr::Load(child1_addr, 2)
-    ]);
-    match rightmost_child.get_type() {
-        ExprType::Program => {
-            child0_code.append(&mut vec![Instr::Connect(0, 0, 2)]);
-        }
-        ExprType::Application => {
-            child0_code.append(&mut vec![
-                Instr::MkAgent(3, AgentType::Name),
-                Instr::Connect(0, 0, 3),
-                Instr::Connect(2, 1, 3)
-            ]);
-        }
-    }
-    match left_children.get_type() {
-        ExprType::Program => {
-            child0_code.append(&mut vec![Instr::Push(1, 0)]);
-        }
-        ExprType::Application => {
-            child0_code.append(&mut vec![Instr::Connect(1, 1, 0)]);
-        }
-    }
-    (child1_addr + 1, child0_code)
-}
+impl Index<usize> for Code {
+    type Output = Instr;
 
-fn expr_to_code_and_pos(expr: &Expr, next_id: HeapAddress) -> (HeapAddress, Code) {
-    match expr.get_type() {
-        ExprType::Program => {
-            program_to_code(expr, next_id)
-        }
-        ExprType::Application => {
-            application_to_code(expr, next_id)
-        }
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
     }
-}
-
-pub fn expr_to_code(expr: &Expr) -> Code {
-    // Interface
-    let mut code: Code = vec![
-        Instr::MkAgent(0, AgentType::Name),
-    ];
-    match expr.get_type() {
-        ExprType::Program => {
-            let (addr, mut tree_code) =
-                program_to_code(&expr, 1);
-            code.append(&mut tree_code);
-            // Otherwise, push the root node and the interface
-            code.append(&mut vec![
-                Instr::Load(0, 0),
-                Instr::Load(addr, 1),
-                Instr::Push(0, 1)]);
-        }
-        ExprType::Application => {
-            let (addr, mut tree_code) =
-                application_to_code(&expr, 1);
-            code.append(&mut tree_code);
-            // If the tree is an application, connect its p1 to the interface
-            code.append(&mut vec![
-                Instr::Load(0, 0),
-                Instr::Load(addr, 1),
-                Instr::Connect(1, 1, 0)]);
-        }
-    }
-    code.append(&mut vec![Instr::Return]);
-    code
 }
