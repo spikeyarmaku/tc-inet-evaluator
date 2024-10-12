@@ -57,6 +57,8 @@ fn test() {
 }
 
 fn main () {
-    // print_test("t(tttt)".to_string(), "".to_string());
-    test();
+    print_test("t(tttt)".to_string(), "tt".to_string());
+    // test();
+
+    // print_test("tttt".to_string(), "t".to_string());
 }

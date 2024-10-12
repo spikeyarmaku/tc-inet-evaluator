@@ -1,4 +1,5 @@
 use std::ops::Index;
+use std::thread::current;
 
 use crate::agent::*;
 use crate::expr::*;
@@ -16,8 +17,8 @@ pub enum Instr {
     // Connect two agents by their principal ports and add them to the active
     // pair stack
     Push    (RegAddress,    RegAddress              ),
-    // Set up the registers according to an agent on the heap
-    Load    (HeapAddress,   RegAddress              ),
+    // Set the register's value to the address
+    Load    (RegAddress,    HeapAddress             ),
     // End marker of a series of instructions
     Return,
 }
@@ -50,72 +51,69 @@ impl Code {
         self.0.extend(instrs);
     }
 
-    fn program_to_code(&mut self, expr: &Expr, next_id: HeapAddress) -> HeapAddress {
-        match expr.children.len() {
-            0 => {
-                self.record_instrs(&[Instr::MkAgent(0, AgentType::L)]);
-                next_id
-            }
-            1 => {
-                // Create instructions for the subtree
-                let child_addr = self.program_to_code(&expr.children[0], next_id);
-                self.record_instrs(&[
-                    Instr::MkAgent(0, AgentType::S),
-                    Instr::Load(child_addr, 1),
-                    Instr::Connect(0, PortNum::P0, 1),
-                ]);
-                child_addr + 1
-            }
-            _ => {
-                let child0_addr = self.program_to_code(&expr.children[0], next_id);
-                let child1_addr = self.program_to_code(&expr.children[1], child0_addr + 1);
-                self.record_instrs(&[
-                    Instr::Load(child0_addr, 1),
-                    Instr::Load(child1_addr, 2),
-                    Instr::MkAgent(0, AgentType::F),
-                    Instr::Connect(0, PortNum::P0, 1),
-                    Instr::Connect(0, PortNum::P1, 2),
-                ]);
-                child1_addr + 1
-            }
-        }
-    }
+    // Given a heap address and an expr, compile the creation of the expr (as a
+    // chain of L's and A's) at the given address to instructions, and return
+    // the next free heap address
+    fn expr_to_code(&mut self, expr: &Expr, heap_addr: HeapAddress) -> HeapAddress {
+        if expr.children.is_empty() {
+            self.record_instrs(&[Instr::MkAgent(0, AgentType::L)]);
+            heap_addr + 1
+        } else {
+            self.record_instrs(&[
+                Instr::MkAgent(0, AgentType::A),
+                Instr::MkAgent(1, AgentType::L),
+            ]);
+            
+            let mut addr_child0 = heap_addr + 1;
+            let mut next_free_addr = heap_addr + 2;
+            for i in 0..expr.children.len() {
+                let c = &expr.children[i];
+                let addr_child1 = next_free_addr;
+                next_free_addr = self.expr_to_code(c, addr_child1);
+                let a_addr = next_free_addr;
+                
+                // Create the A node, except for the last one, since that has
+                // already been created at the beginning (because that is what
+                // had to be created at the provided address)
+                if i < expr.children.len() - 1 {
+                    self.record_instrs(&[Instr::MkAgent(0, AgentType::A)]);
+                    next_free_addr += 1;
+                } else {
+                    self.record_instrs(&[Instr::Load(0, heap_addr)]);
+                }
 
-    fn application_to_code(&mut self, expr: &Expr, next_id: HeapAddress) -> HeapAddress {
-        let rightmost_child = &expr.children[expr.children.len() - 1];
-        let left_children = Expr {
-            children: expr.children[0..expr.children.len() - 1].to_vec(),
-        };
-        let child0_addr = self.expr_to_code(&left_children, next_id);
-        let child1_addr = self.expr_to_code(&rightmost_child, child0_addr + 1);
-        self.record_instrs(&[
-            Instr::MkAgent(0, AgentType::A),
-            Instr::Load(child0_addr, 1),
-            Instr::Load(child1_addr, 2),
-        ]);
-        match rightmost_child.get_type() {
-            ExprType::Program => {
-                self.record_instrs(&[Instr::Connect(0, PortNum::P0, 2)]);
-            }
-            ExprType::Application => {
+                // Load the children
                 self.record_instrs(&[
-                    Instr::MkAgent(3, AgentType::Name),
-                    Instr::Connect(0, PortNum::P0, 3),
-                    Instr::Connect(2, PortNum::P1, 3),
+                    Instr::Load(1, addr_child0),
+                    Instr::Load(2, addr_child1),
                 ]);
-            }
-        }
-        match left_children.get_type() {
-            ExprType::Program => self.record_instrs(&[Instr::Push(1, 0)]),
-            ExprType::Application => self.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)])
-        }
-        child1_addr + 1
-    }
 
-    fn expr_to_code(&mut self, expr: &Expr, next_id: HeapAddress) -> HeapAddress {
-        match expr.get_type() {
-            ExprType::Program => self.program_to_code(expr, next_id),
-            ExprType::Application => self.application_to_code(expr, next_id),
+                // Connect child0 and the A node
+                if i == 0 {
+                    // At first, child0 is an L node
+                    self.record_instrs(&[Instr::Push(1, 0)]);
+                } else {
+                    // Later, child0 is an A node
+                    self.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)]);
+                }
+
+                // Connect child1 and the A node
+                if c.children.is_empty() {
+                    // If child1 has no children, it is an L node
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 2)]);
+                } else {
+                    // Else it is an A node and a name has to be created
+                    self.record_instrs(&[
+                        Instr::MkAgent(3, AgentType::Name),
+                        Instr::Connect(0, PortNum::P0, 3),
+                        Instr::Connect(2, PortNum::P1, 3),
+                    ]);
+                    next_free_addr += 1;
+                }
+
+                addr_child0 = a_addr;
+            }
+            next_free_addr
         }
     }
 
@@ -123,34 +121,25 @@ impl Code {
         Self(instrs.to_vec())
     }
 
-    // FIXME It doesn't handle cases like t(tttt)
     // Compile a tree expression to code. Automatically use L, S and F agents
     // and only put A where a node has more than two children
     pub fn from_expr(expr: &Expr) -> Self {
         // Create interface at heap[0]
         let mut code = Self::from_instrs(&[Instr::MkAgent(0, AgentType::Name)]);
 
-        // Compile the expr to code
-        match expr.get_type() {
-            ExprType::Program => {
-                let addr = code.program_to_code(&expr, 1);
-                // If `expr` is a program, push the root node and the interface
-                code.record_instrs(&[
-                    Instr::Load(0, 0),
-                    Instr::Load(addr, 1),
-                    Instr::Push(0, 1)
-                ]);
-            }
-            ExprType::Application => {
-                let addr = code.application_to_code(&expr, 1);
-                // If `expr` is an application, connect its p1 to the interface
-                code.record_instrs(&[
-                    Instr::Load(0, 0),
-                    Instr::Load(addr, 1),
-                    Instr::Connect(1, PortNum::P1, 0),
-                ]);
-            }
+        code.expr_to_code(&expr, 1);
+        code.record_instrs(&[
+            Instr::Load(0, 0),
+            Instr::Load(1, 1),
+        ]);
+        if expr.children.is_empty() {
+            // If `expr` is just a node, push it and the interface
+            code.record_instrs(&[Instr::Push(0, 1)]);
+        } else {
+            // If `expr` is an application, connect its p1 to the interface
+            code.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)]);
         }
+
         code.record_instrs(&[Instr::Return]);
         code
     }

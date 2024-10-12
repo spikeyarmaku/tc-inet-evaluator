@@ -47,18 +47,11 @@ impl<T> Heap<T> {
         }
     }
 
-    // Mark the `index`th entry as empty, and pruned empty spaces from the end
+    // Mark the `index`th entry as empty
     pub fn remove(&mut self, index: usize) {
-        self.data[index] = None;
-        self.empty_count += 1;
-        self.shrink();
-    }
-
-    // Delete superfluous empty spaces from the end
-    fn shrink(&mut self) {
-        while self.data.last().unwrap().is_none() {
-            self.data.pop();
-            self.empty_count -= 1;
+        if self.data[index].is_some() {
+            self.data[index] = None;
+            self.empty_count += 1;
         }
     }
 }

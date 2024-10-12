@@ -143,7 +143,7 @@ impl VM {
                     right_agent: self.reg[reg_addr1 as usize],
                 });
             }
-            Instr::Load(heap_addr, reg_addr) => {
+            Instr::Load(reg_addr, heap_addr) => {
                 self.reg[reg_addr as usize] = heap_addr;
             }
             Instr::Return => return,
@@ -194,8 +194,10 @@ impl VM {
     }
 
     pub fn readback(&mut self) -> Expr {
-        // TODO It's just a final readback, it assumes the first agent in the
-        // heap is a Name agent, connected to the resulting network
+        // TODO It's just a final readback, it assumes the only equation is the
+        // name and the resulting tree
+        // let eq = self.active_pairs.pop().unwrap();
+        // self.readback_agent(eq.left_agent)
         self.readback_agent(0)
     }
 
@@ -210,13 +212,13 @@ impl VM {
                     self.readback_agent(new_addr)
                 }
             }
-            AgentType::L => Expr::make_leaf(),
-            AgentType::S => Expr::make_stem(self.readback_agent(agent.ports[0])),
-            AgentType::F => Expr::make_fork(
+            AgentType::L => Expr::new(vec![]),
+            AgentType::S => Expr::new(vec![self.readback_agent(agent.ports[0])]),
+            AgentType::F => Expr::new(vec![
                 self.readback_agent(agent.ports[0]),
-                self.readback_agent(agent.ports[1]),
+                self.readback_agent(agent.ports[1])]
             ),
-            _ => Expr::make_leaf(),
+            _ => Expr::new(vec![]),
         }
     }
 }
