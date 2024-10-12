@@ -1,5 +1,4 @@
 use std::ops::Index;
-use std::thread::current;
 
 use crate::agent::*;
 use crate::expr::*;
@@ -28,7 +27,6 @@ pub struct Tape {
     code: Code,
 }
 
-// set, read byte, read word
 impl Tape {
     pub fn from_code(new_code: Code) -> Self {
         Tape {pc: 0, code: new_code}
@@ -121,17 +119,23 @@ impl Code {
         Self(instrs.to_vec())
     }
 
-    // Compile a tree expression to code. Automatically use L, S and F agents
-    // and only put A where a node has more than two children
+    // Compile a tree expression to code. Only use L and A nodes
     pub fn from_expr(expr: &Expr) -> Self {
-        // Create interface at heap[0]
+        // Create interface at heap[0]. At the end, this will be used to read
+        // back the result
         let mut code = Self::from_instrs(&[Instr::MkAgent(0, AgentType::Name)]);
 
+        // Compile the expr into code
         code.expr_to_code(&expr, 1);
+
+        // Load the topmost node from the compiled expr and the interface from
+        // heap[0]
         code.record_instrs(&[
             Instr::Load(0, 0),
             Instr::Load(1, 1),
         ]);
+
+        // Connect the two
         if expr.children.is_empty() {
             // If `expr` is just a node, push it and the interface
             code.record_instrs(&[Instr::Push(0, 1)]);
@@ -140,6 +144,7 @@ impl Code {
             code.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)]);
         }
 
+        // Return
         code.record_instrs(&[Instr::Return]);
         code
     }

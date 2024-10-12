@@ -33,6 +33,8 @@ pub struct VM {
 }
 
 impl VM {
+    // Take an expr, compile it to code, set up the VM, and run the code on it.
+    // When it finishes, the expr's inet representation will be loaded in the VM
     pub fn from_expr(expr: Expr) -> Self {
         crate::debug_log!("\n=== Compiling Expr to Code ===\n");
         let code = Code::from_expr(&expr);
@@ -46,6 +48,10 @@ impl VM {
         vm
     }
 
+    // Names are used to connect two aux ports. Eventually, one of those aux
+    // ports will give way to a principal port, at which point the name becomes
+    // an indirection, which gets resolved by connecting the principal port to
+    // the aux port
     fn resolve_names(&mut self) {
         loop {
             let eq: Equation = match self.active_pairs.pop() {
@@ -86,8 +92,13 @@ impl VM {
         }
     }
 
+    // Execute an interaction rule. Pop the top of the stack until an equation
+    // without names is reached. Then set up the registers for both agents, load
+    // the code for the appropriate rule, and execute it
     pub fn step(&mut self) -> EvalState {
         self.resolve_names();
+
+        // Pop the next equation
         let eq = match self.active_pairs.pop() {
             None => return EvalState::EvalFinished,
             Some(x) => x,
@@ -102,13 +113,17 @@ impl VM {
         crate::debug_log!("{}\n{}\n{}\n{:?}", self.get_reg(), self.get_heap(),
             self.get_active_pairs(), eq);
 
+        // Find the appropriate rule and load its code
         let left_agent_type = self.heap[eq.left_agent].agent_type as u8 - AgentType::L as u8;
         let right_agent_type = self.heap[eq.right_agent].agent_type as u8 - AgentType::E as u8;
         let code_index = left_agent_type * 5 + right_agent_type;
         self.tape.set(Code::from_instrs(RULES[code_index as usize]));
         crate::debug_log!("Invoking rule {}", RULES_NAME[code_index as usize]);
 
+        // Execute the code
         self.exec();
+
+        // Free the original agent pair
         self.heap.remove(eq.left_agent);
         self.heap.remove(eq.right_agent);
 
@@ -119,6 +134,7 @@ impl VM {
         }
     }
 
+    // Execute instructions on the tape
     fn exec(&mut self) {
         let mut instr = self.tape.read_instr();
         while instr != Instr::Return {
@@ -127,6 +143,7 @@ impl VM {
         }
     }
 
+    // Execute a single instruction
     fn exec_instr(&mut self, instr: Instr) {
         crate::debug_log!("  > {:?}", instr);
         match instr {
@@ -150,6 +167,7 @@ impl VM {
         }
     }
 
+    // Evaluate the VM until there are no more active pairs present
     pub fn eval(&mut self) {
         crate::debug_log!("\n=== Evaluating Code ===\n");
         let mut step_count = 0;
@@ -160,6 +178,7 @@ impl VM {
         crate::debug_log!("Step count: {}", step_count);
     }
 
+    // Get the register content of the VM as a String (inly used for debugging)
     fn get_reg(&self) -> String {
         let mut str = format!("REG - {}:\n", self.reg.len());
         let mut i = 0;
@@ -170,6 +189,7 @@ impl VM {
         str
     }
 
+    // Get the heap content of the VM as a String (inly used for debugging)
     fn get_heap(&self) -> String {
         let mut str = format!("HEAP - {} / {}:\n", self.heap.len(), self.heap.full_len());
         let mut i = 0;
@@ -180,6 +200,7 @@ impl VM {
         str
     }
 
+    // Get the active pairs of the VM as a String (inly used for debugging)
     fn get_active_pairs(&self) -> String {
         let mut str = format!("ACTIVE PAIRS - {}:\n", self.active_pairs.size());
         let mut i = 0;
@@ -194,10 +215,9 @@ impl VM {
     }
 
     pub fn readback(&mut self) -> Expr {
-        // TODO It's just a final readback, it assumes the only equation is the
-        // name and the resulting tree
-        // let eq = self.active_pairs.pop().unwrap();
-        // self.readback_agent(eq.left_agent)
+        // FIXME It's just a final readback, it assumes the topmost agent is at
+        // heap[0]. Since it doesn't handle names, duplication, application,
+        // etc., it cannot be used to read back an intermediate state of the VM
         self.readback_agent(0)
     }
 

@@ -3,9 +3,8 @@ use std::ops::IndexMut;
 
 pub struct Stack<T>(Vec<T>);
 
-// The heap contains the agents. A freed agent leaves an empty space that can be
-// filled later. Option<T> is used so empty spaces can be marked. Continuous
-// patches of empty spaces reaching the end of the vec can be pruned
+// The heap contains the agents. Freeing an agent leaves an empty space that can
+// be filled later. Option<T> is used so empty spaces can be marked
 pub struct Heap<T> {
     empty_count: usize,
     data: Vec<Option<T>>,
@@ -19,12 +18,12 @@ impl<T> Heap<T> {
         }
     }
 
-    // Return the number of occupied entries
+    // Return the number of occupied entries (only used for debugging)
     pub fn len(&self) -> usize {
         self.data.len() - self.empty_count
     }
 
-    // Return the actual size of the underlying vec
+    // Return the actual size of the underlying vec (only used for debugging)
     pub fn full_len(&self) -> usize {
         self.data.len()
     }
@@ -39,7 +38,6 @@ impl<T> Heap<T> {
                 self.data.len() - 1
             }
             Some(i) => {
-                // crate::debug_log!("Push to {i}");
                 self.data[i] = Some(item);
                 self.empty_count -= 1;
                 i
