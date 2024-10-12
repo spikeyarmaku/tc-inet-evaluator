@@ -1,7 +1,7 @@
 use crate::expr::*;
 use crate::global::*;
 
-pub fn parse_tree(str: &String) -> Option<Expr> {
+pub fn parse_tree(str: &str) -> Option<Expr> {
     crate::debug_log!("\n=== Parsing String into Expr ===\n");
     let mut expr: Option<Expr> = None;
     let mut stack: Vec<Option<Expr>> = Vec::new();
@@ -18,6 +18,7 @@ pub fn parse_tree(str: &String) -> Option<Expr> {
                     expr = Some(temp);
                 }
             }
+            ' ' => {}
             _ => match expr {
                 None => {
                     expr = Some(Expr {
