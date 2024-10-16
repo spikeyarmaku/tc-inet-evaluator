@@ -178,7 +178,7 @@ impl VM {
         crate::debug_log!("Step count: {}", step_count);
     }
 
-    // Get the register content of the VM as a String (inly used for debugging)
+    // Get the register content of the VM as a String (only used for debugging)
     fn get_reg(&self) -> String {
         let mut str = format!("REG - {}:\n", self.reg.len());
         let mut i = 0;
@@ -189,7 +189,7 @@ impl VM {
         str
     }
 
-    // Get the heap content of the VM as a String (inly used for debugging)
+    // Get the heap content of the VM as a String (only used for debugging)
     fn get_heap(&self) -> String {
         let mut str = format!("HEAP - {} / {}:\n", self.heap.len(), self.heap.full_len());
         let mut i = 0;
@@ -200,7 +200,7 @@ impl VM {
         str
     }
 
-    // Get the active pairs of the VM as a String (inly used for debugging)
+    // Get the active pairs of the VM as a String (only used for debugging)
     fn get_active_pairs(&self) -> String {
         let mut str = format!("ACTIVE PAIRS - {}:\n", self.active_pairs.size());
         let mut i = 0;

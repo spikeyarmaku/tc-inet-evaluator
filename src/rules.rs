@@ -15,13 +15,15 @@ const fn right(n: RegAddress) -> RegAddress {
 }
 
 pub const RULES: [&[Instr]; 15] = [
-    &RULE_L_E, &RULE_L_D, &RULE_L_A, &RULE_L_T, &RULE_L_Q, &RULE_S_E, &RULE_S_D, &RULE_S_A,
-    &RULE_S_T, &RULE_S_Q, &RULE_F_E, &RULE_F_D, &RULE_F_A, &RULE_F_T, &RULE_F_Q,
+    &RULE_L_E, &RULE_L_D, &RULE_L_A, &RULE_L_T, &RULE_L_Q,
+    &RULE_S_E, &RULE_S_D, &RULE_S_A, &RULE_S_T, &RULE_S_Q,
+    &RULE_F_E, &RULE_F_D, &RULE_F_A, &RULE_F_T, &RULE_F_Q,
 ];
 
 pub const RULES_NAME: [&str; 15] = [
-    "RULE_L_E", "RULE_L_D", "RULE_L_A", "RULE_L_T", "RULE_L_Q", "RULE_S_E", "RULE_S_D", "RULE_S_A",
-    "RULE_S_T", "RULE_S_Q", "RULE_F_E", "RULE_F_D", "RULE_F_A", "RULE_F_T", "RULE_F_Q",
+    "RULE_L_E", "RULE_L_D", "RULE_L_A", "RULE_L_T", "RULE_L_Q",
+    "RULE_S_E", "RULE_S_D", "RULE_S_A", "RULE_S_T", "RULE_S_Q",
+    "RULE_F_E", "RULE_F_D", "RULE_F_A", "RULE_F_T", "RULE_F_Q",
 ];
 
 // L >< E => ;
