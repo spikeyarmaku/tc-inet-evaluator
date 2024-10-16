@@ -305,10 +305,10 @@ define void @push(i8 %reg_index0, i8 %reg_index1) {
     %pair_ptr = call ptr @store_pair(%Pair %new_pair.1)
 
     ; Update agents' pair ptrs
-    %pair_ptr.0 = getelementptr %Pair, ptr %pair_ptr, i32 0
+    %pair_ptr.0 = getelementptr %Pair, ptr %pair_ptr, i64 0, i32 0
     %agent0_pair_ptr = getelementptr %Agent, ptr %agent0_ptr, i64 0, i32 3
     store ptr %pair_ptr.0, ptr %agent0_pair_ptr
-    %pair_ptr.1 = getelementptr %Pair, ptr %pair_ptr, i32 1
+    %pair_ptr.1 = getelementptr %Pair, ptr %pair_ptr, i64 0, i32 1
     %agent1_pair_ptr = getelementptr %Agent, ptr %agent1_ptr, i64 0, i32 3
     store ptr %pair_ptr.1, ptr %agent1_pair_ptr
 
@@ -317,6 +317,38 @@ define void @push(i8 %reg_index0, i8 %reg_index1) {
 
 ; Copy the top of the agent stack to the provided address, and update pointers
 define void @free_agent(ptr %agent_ptr) {
+    ; Delete the "parent ptr" from the children of the deleted agent
+    %deleted_agent_ports_ptr = getelementptr %Agent, ptr %agent_ptr, i64 0, i32 4, i64 0
+    %deleted_agent = load %Agent, ptr %agent_ptr
+    %deleted_agent_port_count = extractvalue %Agent %deleted_agent, 1
+    %deleted_counter_ptr = alloca i8
+    store i8 0, ptr %deleted_counter_ptr
+    br label %deleted_check
+
+deleted_check:
+    %deleted_counter = load i8, ptr %deleted_counter_ptr
+    %deleted_done = icmp eq i8 %deleted_counter, %deleted_agent_port_count
+    br i1 %deleted_done, label %cont, label %remove_parent
+
+remove_parent:
+    %deleted_child_ptr_ptr = getelementptr %Agent*, ptr %deleted_agent_ports_ptr, i8 %deleted_counter
+    %deleted_child_ptr = load ptr, ptr %deleted_child_ptr_ptr
+    %deleted_child_parent_ptr = getelementptr %Agent, ptr %deleted_child_ptr, i64 0, i32 2
+    ; Check if the child's stored parent ptr is actually our ptr
+    %deleted_child_parent = load ptr, ptr %deleted_child_parent_ptr
+    %are_same = icmp eq ptr %deleted_child_parent, %agent_ptr
+    br i1 %are_same, label %update_child, label %incr_counter
+
+update_child:
+    store ptr null, ptr %deleted_child_parent_ptr
+    br label %incr_counter
+
+incr_counter:
+    %deleted_counter.1 = add i8 %deleted_counter, 1
+    store i8 %deleted_counter.1, ptr %deleted_counter_ptr
+    br label %deleted_check
+
+cont:
     ; Decrease the stack pointer
     %stack_ptr_addr = getelementptr %AgentStack, ptr @agent_stack, i32 0, i32 0
     %stack_ptr_old = load ptr, ptr %stack_ptr_addr
@@ -338,16 +370,20 @@ swap:
     %parent_agent_ptr = extractvalue %Agent %agent, 2
     ; Check against null ptr (agent has no parent)
     %cond_parent = icmp eq ptr %parent_agent_ptr, null
-    br i1 %cond_parent, label %jump, label %write
-write:
+    br i1 %cond_parent, label %stack_check, label %parent_write
+
+parent_write:
     store ptr %agent_ptr, ptr %parent_agent_ptr
+    br label %stack_check
+
+stack_check:
     ; Update its ptr on the pair stack
     %pair_stack_ptr = extractvalue %Agent %agent, 3
     ; Check against null ptr (agent is not on pair stack)
     %cond_pair_stack = icmp eq ptr %pair_stack_ptr, null
-    br i1 %cond_pair_stack, label %jump, label %write_pair
+    br i1 %cond_pair_stack, label %jump, label %stack_write
 
-write_pair:
+stack_write:
     store ptr %agent_ptr, ptr %pair_stack_ptr
     br label %jump
 
@@ -369,7 +405,6 @@ overwrite:
     store ptr %port_num_ptr, ptr %child_parent_ptr
 
     %p = ptrtoint ptr %port_num_ptr to i64
-    ; call void @print_i64(i64 %p)
 
     ; Bump the counter
     %counter.1 = add i8 %counter, 1
@@ -429,19 +464,11 @@ end:
     ret void
 }
 
-define void @execute() {
-    br label %start
-
-start:
+define i1 @step() {
     ; Check if there are pairs on the pair stack
     %ps_curr_ptr_ptr = getelementptr %PairStack, ptr @pair_stack, i64 0, i32 0
     %ps_start_ptr = getelementptr %PairStack, ptr @pair_stack, i64 0, i32 1, i64 0
     %ps_curr_ptr = load ptr, ptr %ps_curr_ptr_ptr
-
-    ; %ps_start = ptrtoint ptr %ps_start_ptr to i64
-    ; call void @print_i64(i64 %ps_start)
-    ; %ps_curr = ptrtoint ptr %ps_curr_ptr to i64
-    ; call void @print_i64(i64 %ps_curr)
 
     %stack_empty = icmp eq ptr %ps_curr_ptr, %ps_start_ptr
     br i1 %stack_empty, label %end, label %exec
@@ -540,8 +567,95 @@ rule:
     br label %end
 
 end:
-    ; br label %start
-    ret void ; DEBUG
+    ret i1 %stack_empty
+}
+
+define void @execute() {
+    br label %cont
+cont:
+    %stack_empty = call i1 @step()
+    br i1 %stack_empty, label %end, label %cont
+end:
+    ret void
+}
+
+; Starting from the 0th agent, read and print the result
+declare i32 @printf(i8* noundef, ...)
+
+@str_t = private unnamed_addr constant [2 x i8] c"t\00", align 1
+@str_lp = private unnamed_addr constant [2 x i8] c"(\00", align 1
+@str_rp = private unnamed_addr constant [2 x i8] c")\00", align 1
+define void @print_t() {
+    call i32 (i8*, ...)
+        @printf(i8* noundef getelementptr inbounds
+            ([2 x i8], [2 x i8]* @str_t, i64 0, i64 0))
+    ret void
+}
+define void @print_lp() {
+    call i32 (i8*, ...)
+        @printf(i8* noundef getelementptr inbounds
+            ([2 x i8], [2 x i8]* @str_lp, i64 0, i64 0))
+    ret void
+}
+define void @print_rp() {
+    call i32 (i8*, ...)
+        @printf(i8* noundef getelementptr inbounds
+            ([2 x i8], [2 x i8]* @str_rp, i64 0, i64 0))
+    ret void
+}
+define void @print_tree() {
+    %agent0_ptr = getelementptr %AgentStack, ptr @agent_stack, i64 0, i32 1, i64 0
+    call void @print_agent(ptr %agent0_ptr)
+    ret void
+}
+
+define void @print_agent(ptr %agent_ptr) {
+    %agent_ports_ptr = getelementptr %Agent, ptr %agent_ptr, i64 0, i32 4, i64 0
+    %new_agent_ptr = load ptr, ptr %agent_ports_ptr
+    
+    %agent_type_ptr = getelementptr %Agent, ptr %agent_ptr, i64 0, i32 0
+    %agent_type = load i8, ptr %agent_type_ptr
+
+    %agent_is_name = icmp eq i8 %agent_type, 0
+    br i1 %agent_is_name, label %a_name, label %a_no_name
+
+a_name:
+    call void @print_agent(ptr %new_agent_ptr)
+    br label %end
+
+a_no_name:
+    %agent_is_l = icmp eq i8 %agent_type, 1
+    br i1 %agent_is_l, label %a_is_l, label %a_no_l
+
+a_is_l:
+    call void @print_t()
+    br label %end
+
+a_no_l:
+    %agent_is_s = icmp eq i8 %agent_type, 2
+    br i1 %agent_is_s, label %a_is_s, label %a_no_s
+
+a_is_s:
+    call void @print_t()
+    call void @print_lp()
+    call void @print_agent(ptr %new_agent_ptr)
+    call void @print_rp()
+    br label %end
+
+a_no_s:
+    call void @print_t()
+    call void @print_lp()
+    call void @print_agent(ptr %new_agent_ptr)
+    call void @print_rp()
+    call void @print_lp()
+    %agent_ports_ptr.1 = getelementptr %Agent, ptr %agent_ptr, i64 0, i32 4, i64 1
+    %new_agent_ptr.1 = load ptr, ptr %agent_ports_ptr.1
+    call void @print_agent(ptr %new_agent_ptr.1)
+    call void @print_rp()
+    br label %end
+
+end:
+    ret void
 }
 
 define i32 @main() {
@@ -574,17 +688,10 @@ define i32 @main() {
     call void @load(i8 1, ptr %agent.1)
     call void @connect(i8 1, i8 1, i8 0)
 
-    call void @print_vm(i32 0)
     call void @execute()
-    call void @print_vm(i32 1)
-    call void @execute()
-    call void @print_vm(i32 2)
-    call void @execute()
-    call void @print_vm(i32 3)
-    call void @execute()
-    call void @print_vm(i32 4)
-    call void @execute()
-    call void @print_vm(i32 5)
+    ; call void @print_vm(i32 0)
+
+    call void @print_tree()
 
     ret i32 0
 }
@@ -606,7 +713,7 @@ define i32 @main() {
 @.str.pairs_line = private unnamed_addr constant [8 x i8] c"%d - %d\00", align 1
 @.str.sep = private unnamed_addr constant [32 x i8] c"---------- %d -----------------\00", align 1
 
-declare i32 @printf(i8* noundef, ...) #1
+
 
 define void @print_sep(i32 %index) {
     call void @print_ln()
@@ -825,6 +932,7 @@ end:
 }
 
 define void @print_vm(i32 %index) {
+    call void @print_sep(i32 %index)
     call void @print_reg()
     call void @print_heap()
     call void @print_pairs()
