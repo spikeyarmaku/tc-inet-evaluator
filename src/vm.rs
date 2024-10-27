@@ -23,95 +23,66 @@ struct Equation {
 pub struct VM {
     active_pairs: Stack<Equation>,
     heap: Heap<Agent>,
-    // The registers are set up in a way that the first MAX_AUX_NUM registers
-    // contain the indices of agents connected to the ports of the first agent
-    // in a pair, the next MAX_AUX_NUM registers contain similar info for the
-    // second agent, and the rest are temporary indices for agents created in a
-    // rule
-    reg: [HeapAddress; MAX_REG_SIZE as usize],
     tape: Tape,
+
+    // left agent max aux num (2) + Right agent max aux num (4) + most agents
+    // created in a rule (4) = 10
+    reg: [HeapAddress; MAX_AGENT_REG_SIZE as usize],
 }
 
 impl VM {
-    // Take an expr, compile it to code, set up the VM, and run the code on it.
-    // When it finishes, the expr's inet representation will be loaded in the VM
-    pub fn from_expr(expr: Expr) -> Self {
-        crate::debug_log!("\n=== Compiling Expr to Code ===\n");
-        let code = Code::from_expr(&expr);
+    pub fn from_code(code: Code) -> Self {
         let mut vm = Self {
             active_pairs: Stack::new(),
             heap: Heap::new(),
-            reg: [const { UNASSIGNED_PORT }; MAX_REG_SIZE as usize],
             tape: Tape::from_code(code),
+            reg: [const {UNASSIGNED_PORT}; MAX_AGENT_REG_SIZE as usize],
         };
         vm.exec();
         vm
     }
+    // Take an expr, compile it to code, set up the VM, and run the code on it.
+    // When it finishes, the expr's inet representation will be loaded in the VM
+    pub fn from_expr(expr: Expr) -> Self {
+        let code = Code::from_expr(&expr);
+        VM::from_code(code)
+    }
 
-    // Names are used to connect two aux ports. Eventually, one of those aux
-    // ports will give way to a principal port, at which point the name becomes
-    // an indirection, which gets resolved by connecting the principal port to
-    // the aux port
-    fn resolve_names(&mut self) {
-        loop {
-            let eq: Equation = match self.active_pairs.pop() {
-                None => return,
-                Some(x) => x,
-            };
-            let agent0 = &self.heap[eq.left_agent];
-            let agent1 = &self.heap[eq.right_agent];
-
-            if agent1.agent_type != AgentType::Name {
-                if agent0.agent_type != AgentType::Name {
-                    self.active_pairs.push(eq);
-                    return;
-                } else {
-                    if agent0.ports[0] == UNASSIGNED_PORT {
-                        let agent0 = &mut self.heap[eq.left_agent];
-                        agent0.ports[0] = eq.right_agent;
-                    } else {
-                        self.active_pairs.push(Equation {
-                            left_agent: agent0.ports[0],
-                            right_agent: eq.right_agent,
-                        });
-                        self.heap.remove(eq.left_agent);
-                    }
-                }
-            } else {
-                if agent1.ports[0] == UNASSIGNED_PORT {
-                    let agent1 = &mut self.heap[eq.right_agent];
-                    agent1.ports[0] = eq.left_agent;
-                } else {
-                    self.active_pairs.push(Equation {
-                        left_agent: eq.left_agent,
-                        right_agent: agent1.ports[0],
-                    });
-                    self.heap.remove(eq.right_agent);
-                }
-            }
-        }
+    // Return true if there are no agents in the heap (only used for debugging)
+    pub fn is_empty(&self) -> bool {
+        self.heap.len() == 0
     }
 
     // Execute an interaction rule. Pop the top of the stack until an equation
     // without names is reached. Then set up the registers for both agents, load
     // the code for the appropriate rule, and execute it
     pub fn step(&mut self) -> EvalState {
-        self.resolve_names();
-
         // Pop the next equation
         let eq = match self.active_pairs.pop() {
             None => return EvalState::EvalFinished,
             Some(x) => x,
         };
-
-        // Set up registers
-        for i in 0..MAX_AUX_NUM as usize {
-            self.reg[i] = self.heap[eq.left_agent].ports[i];
-            self.reg[i + MAX_AUX_NUM as usize] = self.heap[eq.right_agent].ports[i];
-        }
-
+        
         crate::debug_log!("{}\n{}\n{}\n{:?}", self.get_reg(), self.get_heap(),
             self.get_active_pairs(), eq);
+
+        if self.heap[eq.left_agent].agent_type == AgentType::I ||
+            self.heap[eq.right_agent].agent_type == AgentType::I
+        {
+            return EvalState::EvalFinished
+        }
+
+        // Set up registers
+        self.reg[0] = eq.left_agent;
+        for i in 0..MAX_AUX_NUM_LEFT {
+            self.reg[(i + 1) as usize] = self.heap[eq.left_agent].ports[i as usize].agent_addr;
+        }
+        
+        self.reg[3] = eq.right_agent;
+        for i in 0..MAX_AUX_NUM_RIGHT {
+            self.reg[(MAX_AUX_NUM_LEFT + i + 2) as usize] =
+                self.heap[eq.right_agent].ports[i as usize].agent_addr;
+        }
 
         // Find the appropriate rule and load its code
         let left_agent_type = self.heap[eq.left_agent].agent_type as u8 - AgentType::L as u8;
@@ -123,7 +94,6 @@ impl VM {
         // Execute the code
         self.exec();
 
-        // Free the original agent pair
         self.heap.remove(eq.left_agent);
         self.heap.remove(eq.right_agent);
 
@@ -143,22 +113,46 @@ impl VM {
         }
     }
 
+    fn connect(&mut self, src_addr: HeapAddress, src_port: PortNum, dst_addr: HeapAddress, dst_port: PortNum) {
+        self.heap[src_addr as usize].ports[src_port as usize] =
+            Port::new(dst_addr, dst_port);
+        self.heap[dst_addr as usize].ports[dst_port as usize] =
+            Port::new(src_addr, src_port);
+        // If they are connected through their main ports, push them on the stack
+        if src_port == PortNum::Main && dst_port == PortNum::Main {
+            self.active_pairs.push(Equation {
+                left_agent: src_addr,
+                right_agent: dst_addr
+            });
+        }
+    }
+
     // Execute a single instruction
     fn exec_instr(&mut self, instr: Instr) {
         crate::debug_log!("  > {:?}", instr);
         match instr {
             Instr::MkAgent(reg_addr, agent_type) => {
-                self.reg[reg_addr as usize] = self.heap.push(Agent::new(agent_type));
+                self.reg[reg_addr as usize] =
+                    self.heap.push(Agent::new(agent_type));
             }
-            Instr::Connect(src_reg_addr, port_num, dst_reg_addr) => {
-                self.heap[self.reg[src_reg_addr as usize]].ports[port_num as usize] =
-                    self.reg[dst_reg_addr as usize];
-            }
-            Instr::Push(reg_addr0, reg_addr1) => {
-                self.active_pairs.push(Equation {
-                    left_agent: self.reg[reg_addr0 as usize],
-                    right_agent: self.reg[reg_addr1 as usize],
-                });
+            Instr::Connect(src_addr, src_port, dst_addr, dst_port, mode) => {
+                let mut real_src_addr = self.reg[src_addr as usize];
+                let mut real_src_port = src_port;
+                let mut real_dst_addr = self.reg[dst_addr as usize];
+                let mut real_dst_port = dst_port;
+                if mode == ConnectMode::LeftRef || mode == ConnectMode::FullRef {
+                    let agent = &self.heap[real_src_addr];
+                    let port = &agent.ports[real_src_port as usize];
+                    real_src_addr = port.agent_addr;
+                    real_src_port = port.port_num;
+                }
+                if mode == ConnectMode::RightRef || mode == ConnectMode::FullRef {
+                    let agent = &self.heap[real_dst_addr];
+                    let port = &agent.ports[real_dst_port as usize];
+                    real_dst_addr = port.agent_addr;
+                    real_dst_port = port.port_num;
+                }
+                self.connect(real_src_addr, real_src_port, real_dst_addr, real_dst_port);
             }
             Instr::Load(reg_addr, heap_addr) => {
                 self.reg[reg_addr as usize] = heap_addr;
@@ -183,7 +177,11 @@ impl VM {
         let mut str = format!("REG - {}:\n", self.reg.len());
         let mut i = 0;
         for e in &self.reg {
-            str.push_str(&format!("  {i}: {:?}\n", e));
+            if *e != UNASSIGNED_PORT {
+                str.push_str(&format!("  {i}: {:?}\n", e));
+            } else {
+                str.push_str(&format!("  {i}: {:?}\n", e));
+            }
             i += 1;
         }
         str
@@ -224,8 +222,8 @@ impl VM {
     fn readback_agent(&self, agent_addr: HeapAddress) -> Expr {
         let agent = &self.heap[agent_addr];
         match agent.agent_type {
-            AgentType::Name => {
-                let new_addr = agent.ports[0];
+            AgentType::I => {
+                let new_addr = agent.ports[0].agent_addr;
                 if new_addr == UNASSIGNED_PORT {
                     Expr { children: vec![] }
                 } else {
@@ -233,10 +231,10 @@ impl VM {
                 }
             }
             AgentType::L => Expr::new(vec![]),
-            AgentType::S => Expr::new(vec![self.readback_agent(agent.ports[0])]),
+            AgentType::S => Expr::new(vec![self.readback_agent(agent.ports[0].agent_addr)]),
             AgentType::F => Expr::new(vec![
-                self.readback_agent(agent.ports[0]),
-                self.readback_agent(agent.ports[1])]
+                self.readback_agent(agent.ports[0].agent_addr),
+                self.readback_agent(agent.ports[1].agent_addr)]
             ),
             _ => Expr::new(vec![]),
         }

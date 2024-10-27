@@ -7,17 +7,15 @@ use crate::global::*;
 pub struct Code(Vec<Instr>);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ConnectMode {NoRef, LeftRef, RightRef, FullRef}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Instr {
     // Create an agent and store it on the heap
-    MkAgent (RegAddress,    AgentType               ),
-    // Connect a port of an agent to the principal port of another agent. To
-    // connect two aux ports, an intermediate Name agent has to be used
-    Connect (RegAddress,    PortNum,    RegAddress  ),
-    // Connect two agents by their principal ports and add them to the active
-    // pair stack
-    Push    (RegAddress,    RegAddress              ),
-    // Set the register's value to the address
-    Load    (RegAddress,    HeapAddress             ),
+    MkAgent     (RegAddress, AgentType),
+    // Connect two existing connections
+    Connect     (RegAddress, PortNum, RegAddress, PortNum, ConnectMode),
+    Load        (RegAddress, HeapAddress),
     // End marker of a series of instructions
     Return,
 }
@@ -46,6 +44,9 @@ impl Tape {
 
 impl Code {
     fn record_instrs(&mut self, instrs: &[Instr]) {
+        // for i in instrs {
+        //     println!("+ {:?}", i);
+        // }
         self.0.extend(instrs);
     }
 
@@ -53,65 +54,73 @@ impl Code {
     // chain of L's and A's) at the given address to instructions, and return
     // the next free heap address
     fn expr_to_code(&mut self, expr: &Expr, heap_addr: HeapAddress) -> HeapAddress {
-        if expr.children.is_empty() {
-            self.record_instrs(&[Instr::MkAgent(0, AgentType::L)]);
-            heap_addr + 1
-        } else {
-            self.record_instrs(&[
-                Instr::MkAgent(0, AgentType::A),
-                Instr::MkAgent(1, AgentType::L),
-            ]);
-            
-            let mut addr_child0 = heap_addr + 1;
-            let mut next_free_addr = heap_addr + 2;
-            for i in 0..expr.children.len() {
-                let c = &expr.children[i];
-                let addr_child1 = next_free_addr;
-                next_free_addr = self.expr_to_code(c, addr_child1);
-                let a_addr = next_free_addr;
-                
-                // Create the A node, except for the last one, since that has
-                // already been created at the beginning (because that is what
-                // had to be created at the provided address)
-                if i < expr.children.len() - 1 {
-                    self.record_instrs(&[Instr::MkAgent(0, AgentType::A)]);
-                    next_free_addr += 1;
-                } else {
-                    self.record_instrs(&[Instr::Load(0, heap_addr)]);
-                }
-
-                // Load the children
+        match expr.children.len() {
+            0 => {
+                self.record_instrs(&[Instr::MkAgent(0, AgentType::L)]);
+                heap_addr + 1
+            },
+            1 => {
+                self.record_instrs(&[Instr::MkAgent(0, AgentType::S)]);
+                let heap_addr_1 = heap_addr + 1;
+                let heap_addr_2 = self.expr_to_code(&expr.children[0], heap_addr_1);
                 self.record_instrs(&[
-                    Instr::Load(1, addr_child0),
-                    Instr::Load(2, addr_child1),
+                    Instr::Load(0, heap_addr),
+                    Instr::Load(1, heap_addr_1),
                 ]);
-
-                // Connect child0 and the A node
-                if i == 0 {
-                    // At first, child0 is an L node
-                    self.record_instrs(&[Instr::Push(1, 0)]);
+                if expr.children[0].children.is_empty() {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::Main, ConnectMode::NoRef)]);
                 } else {
-                    // Later, child0 is an A node
-                    self.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)]);
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::P1, ConnectMode::NoRef)]);
                 }
-
-                // Connect child1 and the A node
-                if c.children.is_empty() {
-                    // If child1 has no children, it is an L node
-                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 2)]);
+                heap_addr_2
+            },
+            2 => {
+                self.record_instrs(&[Instr::MkAgent(0, AgentType::F)]);
+                let heap_addr_1 = heap_addr + 1;
+                let heap_addr_2 = self.expr_to_code(&expr.children[0], heap_addr_1);
+                let heap_addr_3 = self.expr_to_code(&expr.children[1], heap_addr_2);
+                self.record_instrs(&[
+                    Instr::Load(0, heap_addr),
+                    Instr::Load(1, heap_addr_1),
+                    Instr::Load(2, heap_addr_2),
+                ]);
+                if expr.children[0].children.len() < 3 {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::Main, ConnectMode::NoRef)]);
                 } else {
-                    // Else it is an A node and a name has to be created
-                    self.record_instrs(&[
-                        Instr::MkAgent(3, AgentType::Name),
-                        Instr::Connect(0, PortNum::P0, 3),
-                        Instr::Connect(2, PortNum::P1, 3),
-                    ]);
-                    next_free_addr += 1;
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::P1, ConnectMode::NoRef)]);
                 }
-
-                addr_child0 = a_addr;
+                if expr.children[1].children.len() < 3 {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P1, 2, PortNum::Main, ConnectMode::NoRef)]);
+                } else {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P1, 2, PortNum::P1, ConnectMode::NoRef)]);
+                }
+                heap_addr_3
             }
-            next_free_addr
+            _ => {
+                // println!("\nn children");
+                self.record_instrs(&[Instr::MkAgent(0, AgentType::A)]);
+                let heap_addr_1 = heap_addr + 1;
+                let (last_child, rest) = expr.children.split_last().unwrap();
+                let new_expr = Expr{children: rest.to_vec()};
+                let heap_addr_2 = self.expr_to_code(&new_expr, heap_addr_1);
+                let heap_addr_3 = self.expr_to_code(last_child, heap_addr_2);
+                self.record_instrs(&[
+                    Instr::Load(0, heap_addr), // A
+                    Instr::Load(1, heap_addr_1), // left
+                    Instr::Load(2, heap_addr_2), // right
+                ]);
+                if new_expr.children.len() < 3 {
+                    self.record_instrs(&[Instr::Connect(1, PortNum::Main, 0, PortNum::Main, ConnectMode::NoRef)]);
+                } else {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef)]);
+                }
+                if last_child.children.len() < 3 {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 2, PortNum::Main, ConnectMode::NoRef)]);
+                } else {
+                    self.record_instrs(&[Instr::Connect(0, PortNum::P0, 2, PortNum::P1, ConnectMode::NoRef)]);
+                }
+                heap_addr_3
+            }
         }
     }
 
@@ -123,13 +132,11 @@ impl Code {
     pub fn from_expr(expr: &Expr) -> Self {
         // Create interface at heap[0]. At the end, this will be used to read
         // back the result
-        let mut code = Self::from_instrs(&[Instr::MkAgent(0, AgentType::Name)]);
+        let mut code = Self::from_instrs(&[Instr::MkAgent(0, AgentType::I)]);
 
         // Compile the expr into code
         code.expr_to_code(&expr, 1);
 
-        // Load the topmost node from the compiled expr and the interface from
-        // heap[0]
         code.record_instrs(&[
             Instr::Load(0, 0),
             Instr::Load(1, 1),
@@ -138,10 +145,10 @@ impl Code {
         // Connect the two
         if expr.children.is_empty() {
             // If `expr` is just a node, push it and the interface
-            code.record_instrs(&[Instr::Push(0, 1)]);
+            code.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::Main, ConnectMode::NoRef)]);
         } else {
             // If `expr` is an application, connect its p1 to the interface
-            code.record_instrs(&[Instr::Connect(1, PortNum::P1, 0)]);
+            code.record_instrs(&[Instr::Connect(1, PortNum::P1, 0, PortNum::P0, ConnectMode::NoRef)]);
         }
 
         // Return
