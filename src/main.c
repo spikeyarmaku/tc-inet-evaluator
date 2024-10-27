@@ -17,11 +17,16 @@
 #define AGENT_Q 1796
 #define AGENT_I 2048
 
+char* agent_type_str = "LSFEDATQI";
+
 #define P0 0
 #define P1 1
 #define P2 2
 #define P3 3
 #define PMAIN 4
+
+#define AGENT_STACK_SIZE 256
+#define PAIR_STACK_SIZE 32
 
 enum ConnectType {NO_REF, SRC_REF, DST_REF, FULL_REF};
 
@@ -37,7 +42,7 @@ struct Agent {
 
 struct AgentStack {
     struct Agent* next_free_addr;
-    struct Agent data[1000];
+    struct Agent data[AGENT_STACK_SIZE];
 };
 
 struct Pair {
@@ -47,7 +52,7 @@ struct Pair {
 
 struct PairStack {
     struct Pair* next_free_addr;
-    struct Pair data[1000];
+    struct Pair data[PAIR_STACK_SIZE];
 };
 
 typedef void (*Rule)(struct Agent*, struct Agent*);
@@ -83,8 +88,11 @@ static const Rule rule_table[15] = {
 
 // Initialize globals
 void init_globals() {
-    agent_stack.next_free_addr = &agent_stack.data[0];
-    pair_stack.next_free_addr = &pair_stack.data[0];
+    // agent_stack.data = malloc(AGENT_STACK_SIZE * sizeof(struct Agent));
+    agent_stack.next_free_addr = agent_stack.data;
+
+    // pair_stack.data = malloc(PAIR_STACK_SIZE * sizeof(struct Pair));
+    pair_stack.next_free_addr = pair_stack.data;
 }
 
 // Put an agent on the stack and return the pointer to the agent
@@ -119,22 +127,30 @@ void free_agent(struct Agent* stack_slot) {
 
     // Update the parent's and children's ptr
     if (stack_slot->ports[PMAIN] != NULL)  {
-        printf("    Updating parent's ptr %lu\n", (size_t)stack_slot->ports[PMAIN]);
-        stack_slot->ports[PMAIN]->ports[stack_slot->port_numbers[PMAIN]] = stack_slot;
+        printf("    Updating parent's ptr %lu\n",
+            (size_t)stack_slot->ports[PMAIN]);
+        stack_slot->ports[PMAIN]->ports[stack_slot->port_numbers[PMAIN]] =
+            stack_slot;
+    } else {
+        printf(">>> [PANIC] AGENT PARENT IS NULL <<<\n");
     }
-    for (int i = 0; i <= stack_slot->port_count; i++) {
+    for (int i = 0; i < stack_slot->port_count; i++) {
         if (stack_slot->ports[i] != NULL)  {
-            printf("    Updating child's ptr %lu\n", (size_t)stack_slot->ports[i]);
-            stack_slot->ports[i]->ports[stack_slot->port_numbers[i]] = stack_slot;
+            printf("    Updating child's ptr %lu\n",
+                (size_t)stack_slot->ports[i]);
+            stack_slot->ports[i]->ports[stack_slot->port_numbers[i]] =
+                stack_slot;
+        } else {
+            printf(">>> [PANIC] AGENT CHILD %d / %d IS NULL <<<\n", i,
+                stack_slot->port_count);
         }
     }
 
-    printf("    Updating stack ptr\n");
+    printf("    Updating stack ptr %lu\n", (size_t)stack_slot->pair_stack_addr);
     // Update the stack's ptr
     if (stack_slot->pair_stack_addr != NULL) {
         *(stack_slot->pair_stack_addr) = stack_slot;
     }
-    debug_print(129);
 }
 
 // Pop an equation off the stack, execute the corresponding rule, and free the
@@ -169,16 +185,9 @@ struct Agent* mk_agent(uint16_t agent_type) {
     struct Agent agent;
     agent.type = (uint8_t)(agent_type >> 8);
     agent.port_count = (uint8_t)agent_type;
-    
     agent.pair_stack_addr = NULL;
-    for (int i = 0; i < 5; i++) {
-        agent.ports[i] = NULL;
-    }
 
-    *agent_stack.next_free_addr = agent;
-    struct Agent* result = agent_stack.next_free_addr;
-    agent_stack.next_free_addr++;
-    return result;
+    return store_agent(agent);
 }
 
 void push(struct Agent* agent0, struct Agent* agent1) {
@@ -414,7 +423,8 @@ void debug_print_agent_stack() {
             ptr->port_numbers[PMAIN]);
         for (int i = 0; i < 4; i++) {
             if (i < ptr->port_count) {
-                printf(" %16lu-%d", (size_t)ptr->ports[i], ptr->port_numbers[i]);
+                printf(" %16lu-%d", (size_t)ptr->ports[i],
+                    ptr->port_numbers[i]);
             // } else {
             //     printf(" (%lu)", (size_t)ptr->ports[i]);
             }
@@ -732,7 +742,6 @@ int main() {
     connect(agent1, P0, agent7, PMAIN, NO_REF);
     connect(agent1, P1, agent0, P0, NO_REF);
 
-    debug_print(0);
     execute();
 
     printf("Finished execution: ");
