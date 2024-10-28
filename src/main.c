@@ -1,3 +1,10 @@
+// TODO Things to optimize:
+// - agents dont always have to be freed, in many rules they can be
+//   repurposed, saving the cost of moving an agent.
+//   The rules where agents to be deleted: L-E, S-E, L-A, S-A, F-A, L-T, F-T
+// - The current memory handling works, but might not be the fastest, and for
+//   embedded devices, it is wasteful
+
 // Plan:
 // Write the runtime in C
 // Make sure the runtime works properly
@@ -25,8 +32,8 @@ char* agent_type_str = "LSFEDATQI";
 #define P3 3
 #define PMAIN 4
 
-#define AGENT_STACK_SIZE 256
-#define PAIR_STACK_SIZE 32
+#define AGENT_BLOCK_SIZE 4026
+#define PAIR_BLOCK_SIZE 128
 
 enum ConnectType {NO_REF, SRC_REF, DST_REF, FULL_REF};
 
@@ -40,19 +47,33 @@ struct Agent {
     struct Agent* ports[5]; // ports[4] is the agent connected to the main port
 };
 
-struct AgentStack {
-    struct Agent* next_free_addr;
-    struct Agent data[AGENT_STACK_SIZE];
-};
-
 struct Pair {
     struct Agent* agent0;
     struct Agent* agent1;
 };
 
+struct AgentBlock {
+    struct AgentBlock* prev;
+    struct AgentBlock* next;
+    struct Agent* end;
+    struct Agent data[AGENT_BLOCK_SIZE];
+};
+
+struct AgentStack {
+    struct Agent* next_free_addr;
+    struct AgentBlock* current_block;
+};
+
+struct PairBlock {
+    struct PairBlock* prev;
+    struct PairBlock* next;
+    struct Pair* end;
+    struct Pair data[AGENT_BLOCK_SIZE];
+};
+
 struct PairStack {
     struct Pair* next_free_addr;
-    struct Pair data[PAIR_STACK_SIZE];
+    struct PairBlock* current_block;
 };
 
 typedef void (*Rule)(struct Agent*, struct Agent*);
@@ -89,10 +110,20 @@ static const Rule rule_table[15] = {
 // Initialize globals
 void init_globals() {
     // agent_stack.data = malloc(AGENT_STACK_SIZE * sizeof(struct Agent));
-    agent_stack.next_free_addr = agent_stack.data;
+    struct AgentBlock* agent_block = malloc(sizeof(struct AgentBlock));
+    agent_block->next = NULL;
+    agent_block->prev = NULL;
+    agent_block->end = agent_block->data + AGENT_BLOCK_SIZE;
+    agent_stack.next_free_addr = agent_block->data;
+    agent_stack.current_block = agent_block;
 
     // pair_stack.data = malloc(PAIR_STACK_SIZE * sizeof(struct Pair));
-    pair_stack.next_free_addr = pair_stack.data;
+    struct PairBlock* pair_block = malloc(sizeof(struct PairBlock));
+    pair_block->next = NULL;
+    pair_block->prev = NULL;
+    pair_block->end = pair_block->data + PAIR_BLOCK_SIZE;
+    pair_stack.next_free_addr = pair_block->data;
+    pair_stack.current_block = pair_block;
 }
 
 // Put an agent on the stack and return the pointer to the agent
@@ -100,6 +131,18 @@ struct Agent* store_agent(struct Agent agent) {
     *agent_stack.next_free_addr = agent;
     struct Agent* result = agent_stack.next_free_addr;
     agent_stack.next_free_addr++;
+    if (agent_stack.next_free_addr == agent_stack.current_block->end) {
+        struct AgentBlock* agent_block = agent_stack.current_block->next;
+        if (agent_block == NULL) {
+            agent_block = malloc(sizeof(struct AgentBlock));
+            agent_stack.current_block->next = agent_block;
+            agent_block->prev = agent_stack.current_block;
+            agent_block->next = NULL;
+            agent_block->end = agent_block->data + AGENT_BLOCK_SIZE;
+        }
+        agent_stack.next_free_addr = agent_block->data;
+        agent_stack.current_block = agent_block;
+    }
     return result;
 }
 
@@ -111,11 +154,27 @@ void store_pair(struct Pair pair) {
     agent0->pair_stack_addr = &pair_stack.next_free_addr->agent0;
     agent1->pair_stack_addr = &pair_stack.next_free_addr->agent1;
     pair_stack.next_free_addr++;
+    if (pair_stack.next_free_addr == pair_stack.current_block->end) {
+        struct PairBlock* pair_block = pair_stack.current_block->next;
+        if (pair_block == NULL) {
+            pair_block = malloc(sizeof(struct PairBlock));
+            pair_stack.current_block->next = pair_block;
+            pair_block->prev = pair_stack.current_block;
+            pair_block->next = NULL;
+            pair_block->end = pair_block->data + PAIR_BLOCK_SIZE;
+        }
+        pair_stack.next_free_addr = pair_block->data;
+        pair_stack.current_block = pair_block;
+    }
 }
 
 // Compact the stack, and update pointers
 void free_agent(struct Agent* stack_slot) {
     printf("=== Freeing %lu ===\n", (size_t)stack_slot);
+    if (agent_stack.next_free_addr == agent_stack.current_block->data) {
+        agent_stack.current_block = agent_stack.current_block->prev;
+        agent_stack.next_free_addr = agent_stack.current_block->end;
+    }
     agent_stack.next_free_addr--;
     if (stack_slot == agent_stack.next_free_addr) {
         return;
@@ -157,8 +216,13 @@ void free_agent(struct Agent* stack_slot) {
 // agents afterwards
 uint8_t step() {
     printf("Pop pair stack\n");
-    if (pair_stack.next_free_addr == pair_stack.data) {
-        return 1;
+    if (pair_stack.next_free_addr == pair_stack.current_block->data) {
+        if (pair_stack.current_block->prev == NULL) {
+            return 1;
+        } else {
+            pair_stack.current_block = pair_stack.current_block->prev;
+            pair_stack.next_free_addr = pair_stack.current_block->end;
+        }
     }
 
     pair_stack.next_free_addr--;
@@ -404,7 +468,7 @@ void print_agent(struct Agent* agent_addr) {
 }
 
 void print_tree() {
-    print_agent(&agent_stack.data[0]);
+    // print_agent(&agent_stack.data[0]);
 }
 
 char debug_type_to_char(uint8_t type) {
@@ -415,8 +479,12 @@ char debug_type_to_char(uint8_t type) {
 void debug_print_agent_stack() {
     printf("AGENT STACK:\n");
     
-    struct Agent* ptr = &agent_stack.data[0];
-    while (ptr != agent_stack.next_free_addr) {
+    struct AgentStack stack = agent_stack;
+    while (stack.current_block->prev != NULL) {
+        stack.current_block = stack.current_block->prev;
+    }
+    struct Agent* ptr = stack.current_block->data;
+    while (ptr != stack.next_free_addr) {
         printf("%2lu: %c %d %16lu | %16lu-%d |", (size_t)ptr,
             debug_type_to_char(ptr->type), ptr->port_count,
             (size_t)ptr->pair_stack_addr, (size_t)ptr->ports[PMAIN],
@@ -431,18 +499,32 @@ void debug_print_agent_stack() {
         }
         printf("\n");
         ptr++;
+
+        if (ptr == stack.current_block->end && stack.current_block->next != NULL) {
+            stack.current_block = stack.current_block->next;
+            ptr = stack.current_block->data;
+        }
     }
 }
 
 void debug_print_pair_stack() {
     printf("PAIR STACK:\n");
 
-    struct Pair* ptr = &pair_stack.data[0];
-    while (ptr != pair_stack.next_free_addr) {
+    struct PairStack stack = pair_stack;
+    while (stack.current_block->prev != NULL) {
+        stack.current_block = stack.current_block->prev;
+    }
+    struct Pair* ptr = stack.current_block->data;
+    while (ptr != stack.next_free_addr) {
         printf("%8lu: %16lu %c %16lu %c\n", (size_t)ptr, (size_t)ptr->agent0,
             debug_type_to_char(ptr->agent0->type), (size_t)ptr->agent1,
             debug_type_to_char(ptr->agent1->type));
         ptr++;
+
+        if (ptr == stack.current_block->end && stack.current_block->next != NULL) {
+            stack.current_block = stack.current_block->next;
+            ptr = stack.current_block->data;
+        }
     }
 }
 
@@ -466,7 +548,9 @@ void test_rule(char* rule_name) {
     printf("\n>>> Testing rule %s <<<\n", rule_name);
     execute();
 
-    if (agent_stack.next_free_addr != agent_stack.data) {
+    if (agent_stack.next_free_addr != agent_stack.current_block->data ||
+        agent_stack.current_block->prev != NULL)
+    {
         printf("\nRULE %s IS INCORRECT\n", rule_name);
         exit(EXIT_FAILURE);
     }
@@ -661,71 +745,7 @@ int main() {
 
     // test();
 
-    // Set up initial tree for "tttt" (result should be "t")
-    // struct Agent* agent0 = mk_agent(0, AGENT_I);
-    // struct Agent* agent1 = mk_agent(0, AGENT_A);
-    // struct Agent* agent2 = mk_agent(0, AGENT_L);
-    // struct Agent* agent3 = mk_agent(0, AGENT_L);
-    // struct Agent* agent4 = mk_agent(0, AGENT_A);
-    // load(1, agent2);
-    // load(2, agent3);
-    // push(1, 0);
-    // connect(0, 0, 2, 4);
-    // struct Agent* agent5 = mk_agent(0, AGENT_L);
-    // struct Agent* agent6 = mk_agent(0, AGENT_A);
-    // load(1, agent4);
-    // load(2, agent5);
-    // connect(1, 1, 0, 4);
-    // connect(0, 0, 2, 4);
-    // struct Agent* agent7 = mk_agent(0, AGENT_L);
-    // load(0, agent1);
-    // load(1, agent6);
-    // load(2, agent7);
-    // connect(1, 1, 0, 4);
-    // connect(0, 0, 2, 4);
-    // load(0, agent0);
-    // load(1, agent1);
-    // connect(1, 1, 0, 0);
-
     // Set up initial tree for "t(tt)(tt)t" (result should be "tt(ttt)")
-    // struct Agent* agent0 = mk_agent(0, AGENT_I);
-    // struct Agent* agent1 = mk_agent(0, AGENT_A);
-    // struct Agent* agent2 = mk_agent(0, AGENT_A);
-    // struct Agent* agent3 = mk_agent(0, AGENT_A);
-    // struct Agent* agent4 = mk_agent(0, AGENT_A);
-    // struct Agent* agent5 = mk_agent(0, AGENT_L);
-    // load(0, agent4);
-    // struct Agent* agent6 = mk_agent(1, AGENT_L);
-    // load(2, agent5);
-    // push(1, 0);
-    // connect(0, 0, 2, 4);
-    // load(0, agent3);
-    // struct Agent* agent7 = mk_agent(1, AGENT_L);
-    // load(2, agent4);
-    // push(1, 0);
-    // connect(0, 0, 2, 1);
-    // struct Agent* agent8 = mk_agent(0, AGENT_A);
-    // struct Agent* agent9 = mk_agent(0, AGENT_L);
-    // load(0, agent8);
-    // struct Agent* agent10 = mk_agent(1, AGENT_L);
-    // load(2, agent9);
-    // push(1, 0);
-    // connect(0, 0, 2, 4);
-    // load(0, agent2);
-    // load(1, agent3);
-    // load(2, agent8);
-    // connect(0, 4, 1, 1);
-    // connect(0, 0, 2, 1);
-    // struct Agent* agent11 = mk_agent(0, AGENT_L);
-    // load(0, agent1);
-    // load(1, agent2);
-    // load(2, agent11);
-    // connect(0, 4, 1, 1);
-    // connect(0, 0, 2, 4);
-    // load(0, agent0);
-    // load(1, agent1);
-    // connect(1, 1, 0, 0);
-
     struct Agent* agent0 = mk_agent(AGENT_I);
     struct Agent* agent1 = mk_agent(AGENT_A);
     struct Agent* agent2 = mk_agent(AGENT_F);
@@ -745,7 +765,10 @@ int main() {
     execute();
 
     printf("Finished execution: ");
-    print_agent(&agent_stack.data[0]);
+    while (agent_stack.current_block->prev != NULL) {
+        agent_stack.current_block = agent_stack.current_block->prev;
+    }
+    print_agent(&agent_stack.current_block->data[0]);
 
     return 0;
 }
