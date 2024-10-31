@@ -6,11 +6,15 @@ mod expr;
 mod global;
 mod parse;
 mod rules;
+mod test;
 mod vm;
 
-use crate::agent::*;
-use crate::code::*;
-use crate::global::*;
+use std::env;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+use crate::compiler::*;
 use crate::vm::*;
 
 fn eval(expr: &str) -> String {
@@ -20,231 +24,71 @@ fn eval(expr: &str) -> String {
     vm.readback().to_string()
 }
 
-// pub const RULES: [&[Instr]; 15] = [
-//     &RULE_L_E, &RULE_L_D, &RULE_L_A, &RULE_L_T, &RULE_L_Q,
-//     &RULE_S_E, &RULE_S_D, &RULE_S_A, &RULE_S_T, &RULE_S_Q,
-//     &RULE_F_E, &RULE_F_D, &RULE_F_A, &RULE_F_T, &RULE_F_Q,
-// ];
-
-fn test_rules() {
-    test_rule("L-E", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::L),
-        Instr::MkAgent(1, AgentType::E),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("S-E", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::S),
-        Instr::MkAgent(1, AgentType::E),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("F-E", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::F),
-        Instr::MkAgent(1, AgentType::E),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 0, PortNum::P1, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("L-D", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::L),
-        Instr::MkAgent(1, AgentType::D),
-        Instr::MkAgent(2, AgentType::E),
-        Instr::MkAgent(3, AgentType::E),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(1, PortNum::P0, 2, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(1, PortNum::P1, 3, PortNum::Main, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("S-D", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::S),
-        Instr::MkAgent(1, AgentType::D),
-        Instr::MkAgent(2, AgentType::E),
-        Instr::MkAgent(3, AgentType::E),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(1, PortNum::P0, 2, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(1, PortNum::P1, 3, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("F-D", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::F),
-        Instr::MkAgent(1, AgentType::D),
-        Instr::MkAgent(2, AgentType::E),
-        Instr::MkAgent(3, AgentType::E),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::MkAgent(5, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(1, PortNum::P0, 2, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(1, PortNum::P1, 3, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 0, PortNum::P1, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("L-A", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::L),
-        Instr::MkAgent(1, AgentType::A),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::E),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("S-A", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::S),
-        Instr::MkAgent(1, AgentType::A),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::E),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("F-A", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::F),
-        Instr::MkAgent(1, AgentType::A),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::E),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::MkAgent(5, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 0, PortNum::P1, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("L-T", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::L),
-        Instr::MkAgent(1, AgentType::T),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::MkAgent(4, AgentType::E),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 1, PortNum::P2, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("S-T", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::S),
-        Instr::MkAgent(1, AgentType::T),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::MkAgent(4, AgentType::E),
-        Instr::MkAgent(5, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 1, PortNum::P2, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("F-T", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::F),
-        Instr::MkAgent(1, AgentType::T),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::MkAgent(4, AgentType::E),
-        Instr::MkAgent(5, AgentType::L),
-        Instr::MkAgent(6, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 1, PortNum::P2, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(6, PortNum::Main, 0, PortNum::P1, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("L-Q", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::L),
-        Instr::MkAgent(1, AgentType::Q),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::MkAgent(5, AgentType::E),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 1, PortNum::P2, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 1, PortNum::P3, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("S-Q", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::S),
-        Instr::MkAgent(1, AgentType::Q),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::MkAgent(5, AgentType::E),
-        Instr::MkAgent(6, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 1, PortNum::P2, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 1, PortNum::P3, ConnectMode::NoRef),
-        Instr::Connect(6, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
-
-    test_rule("F-Q", Code::from_instrs(&[
-        Instr::MkAgent(0, AgentType::F),
-        Instr::MkAgent(1, AgentType::Q),
-        Instr::MkAgent(2, AgentType::L),
-        Instr::MkAgent(3, AgentType::L),
-        Instr::MkAgent(4, AgentType::L),
-        Instr::MkAgent(5, AgentType::E),
-        Instr::MkAgent(6, AgentType::L),
-        Instr::MkAgent(7, AgentType::L),
-        Instr::Connect(0, PortNum::Main, 1, PortNum::Main, ConnectMode::NoRef),
-        Instr::Connect(2, PortNum::Main, 1, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(3, PortNum::Main, 1, PortNum::P1, ConnectMode::NoRef),
-        Instr::Connect(4, PortNum::Main, 1, PortNum::P2, ConnectMode::NoRef),
-        Instr::Connect(5, PortNum::Main, 1, PortNum::P3, ConnectMode::NoRef),
-        Instr::Connect(6, PortNum::Main, 0, PortNum::P0, ConnectMode::NoRef),
-        Instr::Connect(7, PortNum::Main, 0, PortNum::P1, ConnectMode::NoRef),
-        Instr::Return,
-    ]));
+fn print_help(prog_name: &str) {
+    println!("USAGE: {} filename [-c/--compile]", prog_name);
+    println!("Reads a tree from `filename`, and evaluates it.\n");
+    println!("Flags:");
+    println!("-c/--compile    Compile the tree into a .c file instead of interpreting it");
+    println!("-h/--help");
 }
 
-fn test_rule(rule_name: &str, code: Code) {
-    crate::debug_log!("\n >>> Testing rule {} <<< \n", rule_name);
-    let mut vm = VM::from_code(code);
-    vm.eval();
-    if !vm.is_empty() {
-        crate::debug_log!("INCORRECT");
-        std::process::exit(1);
-    }
-}
-
+// Invocation: tc filename [--interpret | --compile]
 fn main () {
+    // Read command-line args
+    let args: Vec<String> = env::args().collect();
+    let mut short_flags = Vec::new();
+    let mut long_flags = Vec::new();
+    let mut filename= None;
+    for arg in &args {
+        match arg.strip_prefix("-") {
+            Some(f) => short_flags.push(f.to_string()),
+            None => {
+                match arg.strip_prefix("--") {
+                    Some(f) => long_flags.push(f.to_string()),
+                    None => {
+                        filename = Some(arg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if short_flags.contains(&"h".to_string()) || long_flags.contains(&"help".to_string()) || filename.is_none() {
+        print_help(&args[0]);
+    } else {
+        // Read tree
+        let filename_str = filename.unwrap();
+        let tree_str = fs::read_to_string(&filename_str).expect("File should be readable");
+        if short_flags.contains(&"c".to_string()) || long_flags.contains(&"compile".to_string()) {
+            // Compile
+            match parse::parse_tree(&tree_str) {
+                None => {println!("Error while parseing tree");},
+                Some(e) => {
+                    let filename_c = filename_str.clone() + ".c";
+                    let runtime_c = "src/runtime/runtime.c";
+                    let runtime_str = fs::read_to_string(runtime_c).expect("Should be able to read src/runtime/runtime.c");
+                    let code_str = compile(&e);
+
+                    let mut file = OpenOptions::new()
+                        .create(true)
+                        .truncate(true)
+                        .write(true)
+                        .open(filename_c)
+                        .unwrap();
+                    file.write(runtime_str.as_bytes()).expect("Should be able to write to file");
+                    file.write(code_str.as_bytes()).expect("Should be able to write to file");
+                }
+            }
+        } else {
+            // Interpret
+            println!("{}", eval(&tree_str));
+        }
+    }
     // println!("{}", eval("tttt")); // t
     // println!("{}", eval("t(tt)(tt)t")); // tt(ttt)
     // println!("{}", eval("tt(t(t(t(tt(t(t(ttt)(t(tt)))))t(t(tt)(tt)))t)tt)t")); // t(tt)(tt)
     // println!("{}", eval("t t(t(t t)t(t(t t)t)) (t (t t) t)")); // t(t(tt)t)(t(t(tt)t))
-    println!("{}", eval("t (t(t(t(t t t)t))t(t(t t)t)) (t (t t) t)")); // t(t(t(t(tt)t))(t(t(t(tt)t))))(t(tt)t)
+    // println!("{}", eval("t (t(t(t(t t t)t))t(t(t t)t)) (t (t t) t)")); // t(t(t(t(tt)t))(t(t(t(tt)t))))(t(tt)t)
     // test_rules();
 
     // let str = "t(tt)(tt)t";

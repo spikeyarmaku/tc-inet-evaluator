@@ -67,7 +67,7 @@ impl Code {
                     Instr::Load(0, heap_addr),
                     Instr::Load(1, heap_addr_1),
                 ]);
-                if expr.children[0].children.is_empty() {
+                if expr.children[0].children.len() < 3 {
                     self.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::Main, ConnectMode::NoRef)]);
                 } else {
                     self.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::P1, ConnectMode::NoRef)]);
@@ -143,7 +143,7 @@ impl Code {
         ]);
 
         // Connect the two
-        if expr.children.is_empty() {
+        if expr.children.len() < 3 {
             // If `expr` is just a node, push it and the interface
             code.record_instrs(&[Instr::Connect(0, PortNum::P0, 1, PortNum::Main, ConnectMode::NoRef)]);
         } else {

@@ -4,15 +4,18 @@
 //   The rules where agents to be deleted: L-E, S-E, L-A, S-A, F-A, L-T, F-T
 // - The current memory handling works, but might not be the fastest, and for
 //   embedded devices, it is wasteful
-
-// Plan:
-// Write the runtime in C
-// Make sure the runtime works properly
-// Based on the C version, write the LLVM version
+// - Need to make it parallelizable (look at how HVM solved evaluating subnets
+//   that connect to each other)
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+// #define DEBUG_PRINTS
+
+#ifdef DEBUG_PRINTS
+#include <stdarg.h>
+#endif
 
 #define AGENT_L    0
 #define AGENT_S  257
@@ -22,7 +25,7 @@
 #define AGENT_A 1282
 #define AGENT_T 1539
 #define AGENT_Q 1796
-#define AGENT_I 2048
+#define AGENT_I 2049
 
 char* agent_type_str = "LSFEDATQI";
 
@@ -32,7 +35,7 @@ char* agent_type_str = "LSFEDATQI";
 #define P3 3
 #define PMAIN 4
 
-#define AGENT_BLOCK_SIZE 4026
+#define AGENT_BLOCK_SIZE 4096
 #define PAIR_BLOCK_SIZE 128
 
 enum ConnectType {NO_REF, SRC_REF, DST_REF, FULL_REF};
@@ -96,6 +99,14 @@ void rule_f_t(struct Agent*, struct Agent*);
 void rule_f_q(struct Agent*, struct Agent*);
 
 void debug_print(int);
+void debug(const char* s, ...) {
+    #ifdef DEBUG_PRINTS
+    va_list args;
+    va_start(args, s);
+    vprintf(s, args);
+    va_end(args);
+    #endif
+}
 
 // GLOBALS --------
 static struct AgentStack agent_stack;
@@ -170,7 +181,7 @@ void store_pair(struct Pair pair) {
 
 // Compact the stack, and update pointers
 void free_agent(struct Agent* stack_slot) {
-    printf("=== Freeing %lu ===\n", (size_t)stack_slot);
+    debug("=== Freeing %lu ===\n", (size_t)stack_slot);
     if (agent_stack.next_free_addr == agent_stack.current_block->data) {
         agent_stack.current_block = agent_stack.current_block->prev;
         agent_stack.next_free_addr = agent_stack.current_block->end;
@@ -180,32 +191,32 @@ void free_agent(struct Agent* stack_slot) {
         return;
     }
 
-    printf("    Copying top of stack\n");
+    debug("    Copying top of stack\n");
     // Copy the top of the stack to the ptr
     *stack_slot = *agent_stack.next_free_addr;
 
     // Update the parent's and children's ptr
     if (stack_slot->ports[PMAIN] != NULL)  {
-        printf("    Updating parent's ptr %lu\n",
+        debug("    Updating parent's ptr %lu\n",
             (size_t)stack_slot->ports[PMAIN]);
         stack_slot->ports[PMAIN]->ports[stack_slot->port_numbers[PMAIN]] =
             stack_slot;
     } else {
-        printf(">>> [PANIC] AGENT PARENT IS NULL <<<\n");
+        debug(">>> [PANIC] AGENT PARENT IS NULL <<<\n");
     }
     for (int i = 0; i < stack_slot->port_count; i++) {
         if (stack_slot->ports[i] != NULL)  {
-            printf("    Updating child's ptr %lu\n",
+            debug("    Updating child's ptr %lu\n",
                 (size_t)stack_slot->ports[i]);
             stack_slot->ports[i]->ports[stack_slot->port_numbers[i]] =
                 stack_slot;
         } else {
-            printf(">>> [PANIC] AGENT CHILD %d / %d IS NULL <<<\n", i,
+            debug(">>> [PANIC] AGENT CHILD %d / %d IS NULL <<<\n", i,
                 stack_slot->port_count);
         }
     }
 
-    printf("    Updating stack ptr %lu\n", (size_t)stack_slot->pair_stack_addr);
+    debug("    Updating stack ptr %lu\n", (size_t)stack_slot->pair_stack_addr);
     // Update the stack's ptr
     if (stack_slot->pair_stack_addr != NULL) {
         *(stack_slot->pair_stack_addr) = stack_slot;
@@ -215,7 +226,7 @@ void free_agent(struct Agent* stack_slot) {
 // Pop an equation off the stack, execute the corresponding rule, and free the
 // agents afterwards
 uint8_t step() {
-    printf("Pop pair stack\n");
+    debug("Pop pair stack\n");
     if (pair_stack.next_free_addr == pair_stack.current_block->data) {
         if (pair_stack.current_block->prev == NULL) {
             return 1;
@@ -235,9 +246,9 @@ uint8_t step() {
     }
 
     uint8_t rule_index = agent0_addr->type * 5 + agent1_addr->type - 3;
-    printf("Execute rule %d\n", rule_index);
+    debug("Execute rule %d\n", rule_index);
     (*rule_table[rule_index])(agent0_addr, agent1_addr);
-    printf("Free agents\n");
+    debug("Free agents\n");
     free_agent(agent0_addr);
     free_agent(agent1_addr);
 
@@ -418,7 +429,7 @@ void rule_f_t(struct Agent* left, struct Agent* right) {
     connect(agent0, P0, left, P0, DST_REF);
     connect(agent0, P1, left, P1, DST_REF);
     connect(agent0, P2, right, P0, DST_REF);
-    connect(agent0, P3, right, P1, DST_REF);
+    connect(agent0, P3, right, P2, DST_REF);
     connect(right, P1, agent0, PMAIN, SRC_REF);
     return;
 }
@@ -445,9 +456,14 @@ void print_agent(struct Agent* agent_addr) {
             break;
         }
         case 1: {
-            printf("t(");
-            print_agent(agent_addr->ports[0]);
-            printf(")");
+            if (agent_addr->ports[0]->type == 2) {
+                printf("t(");
+                print_agent(agent_addr->ports[0]);
+                printf(")");
+            } else {
+                printf("t");
+                print_agent(agent_addr->ports[0]);
+            }
             break;
         }
         case 2: {
@@ -477,7 +493,7 @@ char debug_type_to_char(uint8_t type) {
 }
 
 void debug_print_agent_stack() {
-    printf("AGENT STACK:\n");
+    debug("AGENT STACK:\n");
     
     struct AgentStack stack = agent_stack;
     while (stack.current_block->prev != NULL) {
@@ -485,19 +501,19 @@ void debug_print_agent_stack() {
     }
     struct Agent* ptr = stack.current_block->data;
     while (ptr != stack.next_free_addr) {
-        printf("%2lu: %c %d %16lu | %16lu-%d |", (size_t)ptr,
+        debug("%2lu: %c %d %16lu | %16lu-%d |", (size_t)ptr,
             debug_type_to_char(ptr->type), ptr->port_count,
             (size_t)ptr->pair_stack_addr, (size_t)ptr->ports[PMAIN],
             ptr->port_numbers[PMAIN]);
         for (int i = 0; i < 4; i++) {
             if (i < ptr->port_count) {
-                printf(" %16lu-%d", (size_t)ptr->ports[i],
+                debug(" %16lu-%d", (size_t)ptr->ports[i],
                     ptr->port_numbers[i]);
             // } else {
-            //     printf(" (%lu)", (size_t)ptr->ports[i]);
+            //     debug(" (%lu)", (size_t)ptr->ports[i]);
             }
         }
-        printf("\n");
+        debug("\n");
         ptr++;
 
         if (ptr == stack.current_block->end && stack.current_block->next != NULL) {
@@ -508,7 +524,7 @@ void debug_print_agent_stack() {
 }
 
 void debug_print_pair_stack() {
-    printf("PAIR STACK:\n");
+    debug("PAIR STACK:\n");
 
     struct PairStack stack = pair_stack;
     while (stack.current_block->prev != NULL) {
@@ -516,7 +532,7 @@ void debug_print_pair_stack() {
     }
     struct Pair* ptr = stack.current_block->data;
     while (ptr != stack.next_free_addr) {
-        printf("%8lu: %16lu %c %16lu %c\n", (size_t)ptr, (size_t)ptr->agent0,
+        debug("%8lu: %16lu %c %16lu %c\n", (size_t)ptr, (size_t)ptr->agent0,
             debug_type_to_char(ptr->agent0->type), (size_t)ptr->agent1,
             debug_type_to_char(ptr->agent1->type));
         ptr++;
@@ -529,11 +545,11 @@ void debug_print_pair_stack() {
 }
 
 void debug_print(int step_count) {
-    printf("\n%d. STEP --------\n", step_count);
+    debug("\n%d. STEP --------\n", step_count);
     debug_print_agent_stack();
-    printf("\n");
+    debug("\n");
     debug_print_pair_stack();
-    printf("-------- STEP\n\n");
+    debug("-------- STEP\n\n");
 }
 
 void execute() {
@@ -544,227 +560,17 @@ void execute() {
     }
 }
 
-void test_rule(char* rule_name) {
-    printf("\n>>> Testing rule %s <<<\n", rule_name);
-    execute();
+void init_tree();
 
-    if (agent_stack.next_free_addr != agent_stack.current_block->data ||
-        agent_stack.current_block->prev != NULL)
-    {
-        printf("\nRULE %s IS INCORRECT\n", rule_name);
-        exit(EXIT_FAILURE);
-    }
-    init_globals();
-}
-
-void test () {
-    struct Agent* agent0;
-    struct Agent* agent1;
-    struct Agent* agent2;
-    struct Agent* agent3;
-    struct Agent* agent4;
-    struct Agent* agent5;
-    struct Agent* agent6;
-    struct Agent* agent7;
-
-    agent0 = mk_agent(AGENT_L);
-    agent1 = mk_agent(AGENT_E);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    test_rule("L-E");
-    
-    agent0 = mk_agent(AGENT_S);
-    agent1 = mk_agent(AGENT_E);
-    agent2 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent0, P0, NO_REF);
-    test_rule("S-E");
-
-    agent0 = mk_agent(AGENT_F);
-    agent1 = mk_agent(AGENT_E);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent0, P0, NO_REF);
-    connect(agent3, PMAIN, agent0, P1, NO_REF);
-    test_rule("F-E");
-
-    agent0 = mk_agent(AGENT_L);
-    agent1 = mk_agent(AGENT_D);
-    agent2 = mk_agent(AGENT_E);
-    agent3 = mk_agent(AGENT_E);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent1, P0, agent2, PMAIN, NO_REF);
-    connect(agent1, P1, agent3, PMAIN, NO_REF);
-    test_rule("L-D");
-
-    agent0 = mk_agent(AGENT_S);
-    agent1 = mk_agent(AGENT_D);
-    agent2 = mk_agent(AGENT_E);
-    agent3 = mk_agent(AGENT_E);
-    agent4 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent1, P0, agent2, PMAIN, NO_REF);
-    connect(agent1, P1, agent3, PMAIN, NO_REF);
-    connect(agent4, PMAIN, agent0, P0, NO_REF);
-    test_rule("S-D");
-
-    agent0 = mk_agent(AGENT_F);
-    agent1 = mk_agent(AGENT_D);
-    agent2 = mk_agent(AGENT_E);
-    agent3 = mk_agent(AGENT_E);
-    agent4 = mk_agent(AGENT_L);
-    agent5 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent1, P0, agent2, PMAIN, NO_REF);
-    connect(agent1, P1, agent3, PMAIN, NO_REF);
-    connect(agent4, PMAIN, agent0, P0, NO_REF);
-    connect(agent5, PMAIN, agent0, P1, NO_REF);
-    test_rule("F-D");
-
-    agent0 = mk_agent(AGENT_L);
-    agent1 = mk_agent(AGENT_A);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_E);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    test_rule("L-A");
-
-    agent0 = mk_agent(AGENT_S);
-    agent1 = mk_agent(AGENT_A);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_E);
-    agent4 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent0, P0, NO_REF);
-    test_rule("S-A");
-
-    agent0 = mk_agent(AGENT_F);
-    agent1 = mk_agent(AGENT_A);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_E);
-    agent4 = mk_agent(AGENT_L);
-    agent5 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent0, P0, NO_REF);
-    connect(agent5, PMAIN, agent0, P1, NO_REF);
-    test_rule("F-A");
-
-    agent0 = mk_agent(AGENT_L);
-    agent1 = mk_agent(AGENT_T);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    agent4 = mk_agent(AGENT_E);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent1, P2, NO_REF);
-    test_rule("L-T");
-
-    agent0 = mk_agent(AGENT_S);
-    agent1 = mk_agent(AGENT_T);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    agent4 = mk_agent(AGENT_E);
-    agent5 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent1, P2, NO_REF);
-    connect(agent5, PMAIN, agent0, P0, NO_REF);
-    test_rule("S-T");
-
-    agent0 = mk_agent(AGENT_F);
-    agent1 = mk_agent(AGENT_T);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    agent4 = mk_agent(AGENT_E);
-    agent5 = mk_agent(AGENT_L);
-    agent6 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent1, P2, NO_REF);
-    connect(agent5, PMAIN, agent0, P0, NO_REF);
-    connect(agent6, PMAIN, agent0, P1, NO_REF);
-    test_rule("F-T");
-
-    agent0 = mk_agent(AGENT_L);
-    agent1 = mk_agent(AGENT_Q);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    agent4 = mk_agent(AGENT_L);
-    agent5 = mk_agent(AGENT_E);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent1, P2, NO_REF);
-    connect(agent5, PMAIN, agent1, P3, NO_REF);
-    test_rule("L-Q");
-
-    agent0 = mk_agent(AGENT_S);
-    agent1 = mk_agent(AGENT_Q);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    agent4 = mk_agent(AGENT_L);
-    agent5 = mk_agent(AGENT_E);
-    agent6 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent1, P2, NO_REF);
-    connect(agent5, PMAIN, agent1, P3, NO_REF);
-    connect(agent6, PMAIN, agent0, P0, NO_REF);
-    test_rule("S-Q");
-
-    agent0 = mk_agent(AGENT_F);
-    agent1 = mk_agent(AGENT_Q);
-    agent2 = mk_agent(AGENT_L);
-    agent3 = mk_agent(AGENT_L);
-    agent4 = mk_agent(AGENT_L);
-    agent5 = mk_agent(AGENT_E);
-    agent6 = mk_agent(AGENT_L);
-    agent7 = mk_agent(AGENT_L);
-    connect(agent0, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent2, PMAIN, agent1, P0, NO_REF);
-    connect(agent3, PMAIN, agent1, P1, NO_REF);
-    connect(agent4, PMAIN, agent1, P2, NO_REF);
-    connect(agent5, PMAIN, agent1, P3, NO_REF);
-    connect(agent6, PMAIN, agent0, P0, NO_REF);
-    connect(agent7, PMAIN, agent0, P1, NO_REF);
-    test_rule("F-Q");
-}
-
-int main() {
+int run() {
     // Set up stacks
     init_globals();
 
-    // test();
-
-    // Set up initial tree for "t(tt)(tt)t" (result should be "tt(ttt)")
-    struct Agent* agent0 = mk_agent(AGENT_I);
-    struct Agent* agent1 = mk_agent(AGENT_A);
-    struct Agent* agent2 = mk_agent(AGENT_F);
-    struct Agent* agent3 = mk_agent(AGENT_S);
-    struct Agent* agent4 = mk_agent(AGENT_L);
-    connect(agent3, P0, agent4, PMAIN, NO_REF);
-    struct Agent* agent5 = mk_agent(AGENT_S);
-    struct Agent* agent6 = mk_agent(AGENT_L);
-    connect(agent5, P0, agent6, PMAIN, NO_REF);
-    connect(agent2, P0, agent3, PMAIN, NO_REF);
-    connect(agent2, P1, agent5, PMAIN, NO_REF);
-    struct Agent* agent7 = mk_agent(AGENT_L);
-    connect(agent2, PMAIN, agent1, PMAIN, NO_REF);
-    connect(agent1, P0, agent7, PMAIN, NO_REF);
-    connect(agent1, P1, agent0, P0, NO_REF);
+    init_tree();
 
     execute();
 
-    printf("Finished execution: ");
+    debug("Finished execution: ");
     while (agent_stack.current_block->prev != NULL) {
         agent_stack.current_block = agent_stack.current_block->prev;
     }
@@ -772,3 +578,5 @@ int main() {
 
     return 0;
 }
+
+

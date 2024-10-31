@@ -20,9 +20,9 @@ impl Port {
         Self {agent_addr, port_num}
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.agent_addr == UNASSIGNED_PORT
-    }
+    // pub fn is_empty(&self) -> bool {
+    //     self.agent_addr == UNASSIGNED_PORT
+    // }
 }
 
 impl fmt::Debug for Port {
