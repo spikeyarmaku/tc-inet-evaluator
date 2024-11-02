@@ -39,14 +39,17 @@ fn main () {
     let mut short_flags = Vec::new();
     let mut long_flags = Vec::new();
     let mut filename= None;
-    for arg in &args {
+    for i in 1..args.len() {
+        let arg = &args[i];
         match arg.strip_prefix("-") {
             Some(f) => short_flags.push(f.to_string()),
             None => {
                 match arg.strip_prefix("--") {
                     Some(f) => long_flags.push(f.to_string()),
                     None => {
-                        filename = Some(arg.to_string());
+                        if filename.is_none() {
+                            filename = Some(arg.to_string());
+                        }
                     }
                 }
             }
@@ -58,7 +61,7 @@ fn main () {
     } else {
         // Read tree
         let filename_str = filename.unwrap();
-        let tree_str = fs::read_to_string(&filename_str).expect("File should be readable");
+        let tree_str = fs::read_to_string(&filename_str).expect(&format!("File should be readable: {}", &filename_str));
         if short_flags.contains(&"c".to_string()) || long_flags.contains(&"compile".to_string()) {
             // Compile
             match parse::parse_tree(&tree_str) {
@@ -73,10 +76,10 @@ fn main () {
                         .create(true)
                         .truncate(true)
                         .write(true)
-                        .open(filename_c)
+                        .open(&filename_c)
                         .unwrap();
-                    file.write(runtime_str.as_bytes()).expect("Should be able to write to file");
-                    file.write(code_str.as_bytes()).expect("Should be able to write to file");
+                    file.write(runtime_str.as_bytes()).expect(&format!("Should be able to write to file: {}",&filename_c));
+                    file.write(code_str.as_bytes()).expect(&format!("Should be able to write to file: {}",&filename_c));
                 }
             }
         } else {
@@ -84,14 +87,4 @@ fn main () {
             println!("{}", eval(&tree_str));
         }
     }
-    // println!("{}", eval("tttt")); // t
-    // println!("{}", eval("t(tt)(tt)t")); // tt(ttt)
-    // println!("{}", eval("tt(t(t(t(tt(t(t(ttt)(t(tt)))))t(t(tt)(tt)))t)tt)t")); // t(tt)(tt)
-    // println!("{}", eval("t t(t(t t)t(t(t t)t)) (t (t t) t)")); // t(t(tt)t)(t(t(tt)t))
-    // println!("{}", eval("t (t(t(t(t t t)t))t(t(t t)t)) (t (t t) t)")); // t(t(t(t(tt)t))(t(t(t(tt)t))))(t(tt)t)
-    // test_rules();
-
-    // let str = "t(tt)(tt)t";
-    // let expr = parse::parse_tree(str).expect("expr_to_code: not a tree expression");
-    // println!("{}", compile(&expr));
 }
