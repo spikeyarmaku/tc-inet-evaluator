@@ -245,6 +245,22 @@ uint8_t step() {
         return 1;
     }
 
+    // DEBUG Check if any of the agents refer to a deleted agent
+    for (int i = -1; i < agent0_addr->port_count; i++) {
+        if (agent0_addr->ports[i%5] > agent_stack.next_free_addr) {
+            debug("Agent0 %lu port %d refers to deleted agent %lu\n",
+                (size_t)agent0_addr, i, (size_t)agent0_addr->ports[i%5]);
+            exit(EXIT_FAILURE);
+        }
+    }
+    for (int i = -1; i < agent1_addr->port_count; i++) {
+        if (agent1_addr->ports[i%5] > agent_stack.next_free_addr) {
+            debug("Agent1 %lu port %d refers to deleted agent %lu\n",
+                (size_t)agent1_addr, i, (size_t)agent1_addr->ports[i%5]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
     uint8_t rule_index = agent0_addr->type * 5 + agent1_addr->type - 3;
     debug("Execute rule %d\n", rule_index);
     (*rule_table[rule_index])(agent0_addr, agent1_addr);
@@ -549,7 +565,7 @@ void debug_print(int step_count) {
     debug_print_agent_stack();
     debug("\n");
     debug_print_pair_stack();
-    debug("-------- STEP\n\n");
+    debug("-------- STEP %d\n\n", step_count);
 }
 
 void execute() {
