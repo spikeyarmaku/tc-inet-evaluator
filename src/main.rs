@@ -1,3 +1,9 @@
+
+// https://treecalcul.us/live/?example=demo-program-optimization
+// https://treecalcul.us/live/?example=demo-fusion
+// https://treecalcul.us/live/?example=bench
+// https://treecalcul.us/live/?example=demo-evaluator
+
 mod agent;
 mod code;
 mod compiler;
@@ -16,13 +22,6 @@ use std::io::Write;
 
 use crate::compiler::*;
 use crate::vm::*;
-
-fn eval(expr: &str) -> String {
-    let tree = parse::parse_tree(expr).expect("expr_to_code: not a tree expression");
-    let mut vm = VM::from_expr(tree);
-    vm.eval();
-    vm.readback().to_string()
-}
 
 fn print_help(prog_name: &str) {
     println!("USAGE: {} filename [-c/--compile]", prog_name);
@@ -62,29 +61,29 @@ fn main () {
         // Read tree
         let filename_str = filename.unwrap();
         let tree_str = fs::read_to_string(&filename_str).expect(&format!("File should be readable: {}", &filename_str));
+        let expr = parse::parse_tree(&tree_str).unwrap();
+        println!("Size of tree: {}", expr.get_size());
         if short_flags.contains(&"c".to_string()) || long_flags.contains(&"compile".to_string()) {
             // Compile
-            match parse::parse_tree(&tree_str) {
-                None => {println!("Error while parseing tree");},
-                Some(e) => {
-                    let filename_c = filename_str.clone() + ".c";
-                    let runtime_c = "src/runtime/runtime.c";
-                    let runtime_str = fs::read_to_string(runtime_c).expect("Should be able to read src/runtime/runtime.c");
-                    let code_str = compile(&e);
+            let filename_c = filename_str.clone() + ".c";
+            let runtime_c = "src/runtime/runtime.c";
+            let runtime_str = fs::read_to_string(runtime_c).expect("Should be able to read src/runtime/runtime.c");
+            let code_str = compile(&expr);
 
-                    let mut file = OpenOptions::new()
-                        .create(true)
-                        .truncate(true)
-                        .write(true)
-                        .open(&filename_c)
-                        .unwrap();
-                    file.write(runtime_str.as_bytes()).expect(&format!("Should be able to write to file: {}",&filename_c));
-                    file.write(code_str.as_bytes()).expect(&format!("Should be able to write to file: {}",&filename_c));
-                }
-            }
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&filename_c)
+                .unwrap();
+            file.write(runtime_str.as_bytes()).expect(&format!("Should be able to write to file: {}",&filename_c));
+            file.write(code_str.as_bytes()).expect(&format!("Should be able to write to file: {}",&filename_c));
         } else {
             // Interpret
-            println!("{}", eval(&tree_str));
+            let mut vm = VM::from_expr(expr);
+            vm.eval();
+            let result = vm.readback().to_string();
+            println!("{}", result);
         }
     }
 }

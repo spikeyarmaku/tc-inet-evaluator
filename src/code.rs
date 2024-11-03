@@ -98,6 +98,7 @@ impl Code {
             }
             _ => {
                 // println!("\nn children");
+                println!("{} children found", expr.children.len());
                 self.record_instrs(&[Instr::MkAgent(0, AgentType::A)]);
                 let heap_addr_1 = heap_addr + 1;
                 let (last_child, rest) = expr.children.split_last().unwrap();

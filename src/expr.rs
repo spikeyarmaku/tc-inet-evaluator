@@ -22,4 +22,8 @@ impl Expr {
         }
         str
     }
+
+    pub fn get_size(&self) -> u64 {
+        1 + self.children.iter().map(|c| c.get_size()).sum::<u64>()
+    }
 }
