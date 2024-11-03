@@ -18,19 +18,22 @@ pub fn parse_tree(str: &str) -> Option<Expr> {
                     expr = Some(temp);
                 }
             }
-            ' ' => {}
-            _ => match expr {
-                None => {
-                    expr = Some(Expr {
-                        children: Vec::new(),
-                    });
+            c => {
+                if !c.is_whitespace() {
+                    match expr {
+                        None => {
+                            expr = Some(Expr {
+                                children: Vec::new(),
+                            });
+                        }
+                        Some(ref mut some_expr) => {
+                            some_expr.children.push(Expr {
+                                children: Vec::new(),
+                            });
+                        }
+                    }
                 }
-                Some(ref mut some_expr) => {
-                    some_expr.children.push(Expr {
-                        children: Vec::new(),
-                    });
-                }
-            },
+            }
         }
     }
     expr
