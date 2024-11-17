@@ -1,4 +1,8 @@
+#define DEBUG_PRINTS
+
 #include "runtime.c"
+
+void init_tree() {}
 
 void test_rule(char* rule_name) {
     debug("\n>>> Testing rule %s <<<\n", rule_name);

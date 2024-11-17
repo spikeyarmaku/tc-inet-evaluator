@@ -17,15 +17,15 @@
 #include <stdarg.h>
 #endif
 
-#define AGENT_L    0
-#define AGENT_S  257
-#define AGENT_F  514
-#define AGENT_E  768
-#define AGENT_D 1026
-#define AGENT_A 1282
-#define AGENT_T 1539
-#define AGENT_Q 1796
-#define AGENT_I 2049
+#define AGENT_L    0 //    0 + 0
+#define AGENT_S  257 //  256 + 1
+#define AGENT_F  514 //  512 + 2
+#define AGENT_E  768 //  768 + 0
+#define AGENT_D 1026 // 1024 + 2
+#define AGENT_A 1282 // 1280 + 2
+#define AGENT_T 1539 // 1536 + 3
+#define AGENT_Q 1796 // 1792 + 4
+#define AGENT_I 2049 // 2048 + 1
 
 char* agent_type_str = "LSFEDATQI";
 
@@ -35,8 +35,8 @@ char* agent_type_str = "LSFEDATQI";
 #define P3 3
 #define PMAIN 4
 
-#define AGENT_BLOCK_SIZE 4096
-#define PAIR_BLOCK_SIZE 128
+#define AGENT_BLOCK_SIZE 4096 // 1073741824 // 4096
+#define PAIR_BLOCK_SIZE 4096 // 128
 
 enum ConnectType {NO_REF, SRC_REF, DST_REF, FULL_REF};
 
@@ -106,6 +106,9 @@ void debug(const char* s, ...) {
     vprintf(s, args);
     va_end(args);
     #endif
+}
+int pmod(int i, int n) {
+    return (i % n + n) % n;
 }
 
 // GLOBALS --------
@@ -182,17 +185,20 @@ void store_pair(struct Pair pair) {
 // Compact the stack, and update pointers
 void free_agent(struct Agent* stack_slot) {
     debug("=== Freeing %lu ===\n", (size_t)stack_slot);
+    // Check if this block is empty
     if (agent_stack.next_free_addr == agent_stack.current_block->data) {
+        // Move to the top of the previous block
         agent_stack.current_block = agent_stack.current_block->prev;
         agent_stack.next_free_addr = agent_stack.current_block->end;
     }
     agent_stack.next_free_addr--;
+    // If the top of the stack is deleted, there's nothing else to do
     if (stack_slot == agent_stack.next_free_addr) {
         return;
     }
 
     debug("    Copying top of stack\n");
-    // Copy the top of the stack to the ptr
+    // Copy the top of the stack to the address of the deleted agent
     *stack_slot = *agent_stack.next_free_addr;
 
     // Update the parent's and children's ptr
@@ -219,7 +225,7 @@ void free_agent(struct Agent* stack_slot) {
     debug("    Updating stack ptr %lu\n", (size_t)stack_slot->pair_stack_addr);
     // Update the stack's ptr
     if (stack_slot->pair_stack_addr != NULL) {
-        *(stack_slot->pair_stack_addr) = stack_slot;
+        *stack_slot->pair_stack_addr = stack_slot;
     }
 }
 
@@ -244,28 +250,19 @@ uint8_t step() {
     if (agent0_addr->type == 8 || agent1_addr->type == 8) {
         return 1;
     }
-
-    // DEBUG Check if any of the agents refer to a deleted agent
-    for (int i = -1; i < agent0_addr->port_count; i++) {
-        if (agent0_addr->ports[i%5] > agent_stack.next_free_addr) {
-            debug("Agent0 %lu port %d refers to deleted agent %lu\n",
-                (size_t)agent0_addr, i, (size_t)agent0_addr->ports[i%5]);
-            exit(EXIT_FAILURE);
-        }
-    }
-    for (int i = -1; i < agent1_addr->port_count; i++) {
-        if (agent1_addr->ports[i%5] > agent_stack.next_free_addr) {
-            debug("Agent1 %lu port %d refers to deleted agent %lu\n",
-                (size_t)agent1_addr, i, (size_t)agent1_addr->ports[i%5]);
-            exit(EXIT_FAILURE);
-        }
-    }
+    
+    // At this point, the pair's address on the pair stack is no longer valid,
+    // so the agent's pair pointers have to be updated.
+    agent0_addr->pair_stack_addr = &agent0_addr;
+    agent1_addr->pair_stack_addr = &agent1_addr;
 
     uint8_t rule_index = agent0_addr->type * 5 + agent1_addr->type - 3;
     debug("Execute rule %d\n", rule_index);
     (*rule_table[rule_index])(agent0_addr, agent1_addr);
     debug("Free agents\n");
     free_agent(agent0_addr);
+    // At this point, if agent1 is moved after deleting agent0, agent1_addr will
+    // still point to the correct address
     free_agent(agent1_addr);
 
     return 0;
@@ -499,10 +496,6 @@ void print_agent(struct Agent* agent_addr) {
     }
 }
 
-void print_tree() {
-    // print_agent(&agent_stack.data[0]);
-}
-
 char debug_type_to_char(uint8_t type) {
     char types[] = {'L', 'S', 'F', 'E', 'D', 'A', 'T', 'Q', 'I'};
     return types[type];
@@ -591,6 +584,8 @@ int run() {
         agent_stack.current_block = agent_stack.current_block->prev;
     }
     print_agent(&agent_stack.current_block->data[0]);
+
+    fflush(stdout);
 
     return 0;
 }
